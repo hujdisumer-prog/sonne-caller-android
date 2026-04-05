@@ -147,7 +147,7 @@ public class CallerService extends Service {
 
                 httpClient.newCall(request).execute();
                 Log.d(TAG, "Reported call done: " + requestId);
-            } catch (IOException e) {
+            } catch (Exception e) {
                 Log.e(TAG, "Report error: " + e.getMessage());
             }
         }).start();
