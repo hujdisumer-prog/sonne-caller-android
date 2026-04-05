@@ -1,0 +1,62 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Create google-services.json
+        run: |
+          cat > app/src/main/google-services.json << EOF
+          {
+            "project_info": {
+              "project_number": "${{ secrets.FIREBASE_PROJECT_NUMBER }}",
+              "project_id": "${{ secrets.FIREBASE_PROJECT_ID }}",
+              "storage_bucket": "${{ secrets.FIREBASE_PROJECT_ID }}.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "${{ secrets.FIREBASE_APP_ID }}",
+                  "android_client_info": {
+                    "package_name": "com.rayaa.sonnecaller"
+                  }
+                },
+                "api_key": [
+                  {
+                    "current_key": "${{ secrets.FIREBASE_API_KEY }}"
+                  }
+                ]
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+
+      - name: Build Debug APK
+        run: gradle assembleDebug -PAPI_SECRET=${{ secrets.API_SECRET }}
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonne-caller-apk
+          path: app/build/outputs/apk/debug/app-debug.apk

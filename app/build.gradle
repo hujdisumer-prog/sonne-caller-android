@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.rayaa.sonnecaller'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.rayaa.sonnecaller"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        // API config - change these to your values
+        buildConfigField "String", "API_URL", "\"https://sonne-tel.vercel.app\""
+        buildConfigField "String", "API_SECRET", "\"${project.findProperty('API_SECRET') ?: 'change-me'}\""
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+}
+
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.json:json:20231013'
+    implementation 'com.google.firebase:firebase-messaging:24.0.0'
+    implementation platform('com.google.firebase:firebase-bom:33.0.0')
+}
+
+apply plugin: 'com.google.gms.google-services'
