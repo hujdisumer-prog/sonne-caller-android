@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "133064234913",
+    "project_id": "sonnecaller",
+    "storage_bucket": "sonnecaller.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:133064234913:android:3b87e40557f1395990dde0",
+        "android_client_info": {
+          "package_name": "com.rayaa.sonnecaller"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDh8phIILizD63pk3xiyzswcpzURSY1hAY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

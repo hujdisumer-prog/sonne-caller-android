@@ -24,34 +24,6 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Create google-services.json
-        run: |
-          cat > app/src/main/google-services.json << EOF
-          {
-            "project_info": {
-              "project_number": "${{ secrets.FIREBASE_PROJECT_NUMBER }}",
-              "project_id": "${{ secrets.FIREBASE_PROJECT_ID }}",
-              "storage_bucket": "${{ secrets.FIREBASE_PROJECT_ID }}.appspot.com"
-            },
-            "client": [
-              {
-                "client_info": {
-                  "mobilesdk_app_id": "${{ secrets.FIREBASE_APP_ID }}",
-                  "android_client_info": {
-                    "package_name": "com.rayaa.sonnecaller"
-                  }
-                },
-                "api_key": [
-                  {
-                    "current_key": "${{ secrets.FIREBASE_API_KEY }}"
-                  }
-                ]
-              }
-            ],
-            "configuration_version": "1"
-          }
-          EOF
-
       - name: Build Debug APK
         run: gradle assembleDebug -PAPI_SECRET=${{ secrets.API_SECRET }}
 
