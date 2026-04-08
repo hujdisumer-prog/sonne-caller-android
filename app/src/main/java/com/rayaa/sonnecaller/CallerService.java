@@ -100,8 +100,33 @@ public class CallerService extends Service {
             String callNumber = "#31#" + phone;
             Intent callIntent = new Intent(Intent.ACTION_CALL);
             callIntent.setData(Uri.parse("tel:" + Uri.encode(callNumber)));
-            callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(callIntent);
+            callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+
+            // Samsung/Android 10+ blocks startActivity from background services
+            // Use a high-priority notification to wake the screen first
+            Notification callNotif = new Notification.Builder(this, "sonne_call_channel")
+                    .setContentTitle("Sonne Caller")
+                    .setContentText("Appel en cours: " + phone)
+                    .setSmallIcon(android.R.drawable.ic_menu_call)
+                    .setFullScreenIntent(
+                        android.app.PendingIntent.getActivity(
+                            this, 0, callIntent,
+                            android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+                        ), true)
+                    .setCategory(Notification.CATEGORY_CALL)
+                    .setPriority(Notification.PRIORITY_MAX)
+                    .setOngoing(true)
+                    .build();
+
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            nm.notify(2, callNotif);
+
+            // Also try direct startActivity as fallback
+            try {
+                startActivity(callIntent);
+            } catch (Exception bgEx) {
+                Log.w(TAG, "Background startActivity blocked, using fullscreen intent: " + bgEx.getMessage());
+            }
 
             Log.d(TAG, "Call started to " + phone);
 
@@ -166,14 +191,26 @@ public class CallerService extends Service {
     }
 
     private void createNotificationChannel() {
+        // Canal normal pour le service
         NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
                 "Sonne Caller Service",
                 NotificationManager.IMPORTANCE_LOW
         );
         channel.setDescription("Service d'appel automatique");
+
+        // Canal haute priorité pour les appels (perce le mode arrière-plan Samsung)
+        NotificationChannel callChannel = new NotificationChannel(
+                "sonne_call_channel",
+                "Appels Sonne Caller",
+                NotificationManager.IMPORTANCE_HIGH
+        );
+        callChannel.setDescription("Notifications d'appels");
+        callChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+
         NotificationManager manager = getSystemService(NotificationManager.class);
         manager.createNotificationChannel(channel);
+        manager.createNotificationChannel(callChannel);
     }
 
     @Override
