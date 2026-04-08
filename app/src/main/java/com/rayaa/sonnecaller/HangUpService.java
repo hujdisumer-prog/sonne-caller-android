@@ -29,17 +29,13 @@ public class HangUpService extends AccessibilityService {
     public boolean endCall() {
         Log.d(TAG, "HangUpService: attempting to end call");
 
-        // Try to find and click the end call button
+        // Method 1: Try finding button by text/ID
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root != null) {
-            // Search for the end call button by common descriptions/text
             boolean found = findAndClickButton(root, "end call") ||
                             findAndClickButton(root, "raccrocher") ||
                             findAndClickButton(root, "terminer") ||
-                            findAndClickButton(root, "fin d'appel") ||
-                            findAndClickButton(root, "End") ||
-                            findAndClickButton(root, "Decline") ||
-                            findAndClickButton(root, "refuser") ||
+                            findAndClickButton(root, "fin") ||
                             findAndClickEndCallById(root);
 
             root.recycle();
@@ -48,15 +44,51 @@ public class HangUpService extends AccessibilityService {
                 Log.d(TAG, "HangUpService: end call button clicked!");
                 return true;
             }
-            Log.d(TAG, "HangUpService: end call button not found, trying global actions");
         }
 
-        // Fallback: global actions
-        performGlobalAction(GLOBAL_ACTION_BACK);
-        try { Thread.sleep(200); } catch (Exception e) {}
-        performGlobalAction(GLOBAL_ACTION_BACK);
+        // Method 2: Click on the coordinates where the red button is on Samsung S9
+        // S9 screen: 1440x2960 — red button is bottom center
+        Log.d(TAG, "HangUpService: trying coordinate tap on red button");
+        android.graphics.Path path = new android.graphics.Path();
+        // Bottom center of screen (red hang-up button position)
+        float x = 720f;  // center X
+        float y = 2500f; // near bottom Y
+        path.moveTo(x, y);
+        path.lineTo(x + 1, y + 1);
 
-        return true;
+        android.accessibilityservice.GestureDescription.StrokeDescription stroke =
+            new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 50);
+        android.accessibilityservice.GestureDescription gesture =
+            new android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build();
+
+        boolean dispatched = dispatchGesture(gesture, new GestureResultCallback() {
+            @Override
+            public void onCompleted(android.accessibilityservice.GestureDescription gestureDescription) {
+                Log.d(TAG, "HangUpService: tap gesture completed");
+            }
+            @Override
+            public void onCancelled(android.accessibilityservice.GestureDescription gestureDescription) {
+                Log.d(TAG, "HangUpService: tap gesture cancelled");
+            }
+        }, null);
+
+        Log.d(TAG, "HangUpService: gesture dispatched=" + dispatched);
+
+        // Also try different Y position (some Samsung UIs vary)
+        if (dispatched) {
+            try { Thread.sleep(300); } catch (Exception e) {}
+            // Try slightly higher position too
+            android.graphics.Path path2 = new android.graphics.Path();
+            path2.moveTo(720f, 2300f);
+            path2.lineTo(721f, 2301f);
+            android.accessibilityservice.GestureDescription.StrokeDescription stroke2 =
+                new android.accessibilityservice.GestureDescription.StrokeDescription(path2, 0, 50);
+            android.accessibilityservice.GestureDescription gesture2 =
+                new android.accessibilityservice.GestureDescription.Builder().addStroke(stroke2).build();
+            dispatchGesture(gesture2, null, null);
+        }
+
+        return dispatched;
     }
 
     private boolean findAndClickButton(AccessibilityNodeInfo node, String text) {
