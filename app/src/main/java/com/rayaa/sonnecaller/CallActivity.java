@@ -121,10 +121,11 @@ public class CallActivity extends Activity {
 
         boolean ended = false;
 
-        // Method 1: AccessibilityService (most reliable on Samsung)
+        // Method 1: AccessibilityService
         if (HangUpService.isAvailable()) {
-            ended = HangUpService.getInstance().endCall();
-            Log.d(TAG, "Method 1 (AccessibilityService): " + ended);
+            HangUpService.getInstance().endCall();
+            Log.d(TAG, "Method 1 (AccessibilityService): called");
+            ended = true;
         }
 
         // Method 2: TelecomManager.endCall() (backup)
