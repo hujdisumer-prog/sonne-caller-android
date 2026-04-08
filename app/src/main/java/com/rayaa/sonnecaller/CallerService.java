@@ -112,9 +112,27 @@ public class CallerService extends Service {
             boolean screenOn = pm.isInteractive();
 
             if (screenOn) {
-                // Screen is ON (unlocked) — launch activity directly
-                Log.d(TAG, "Screen ON — launching CallActivity directly");
-                startActivity(callActivityIntent);
+                // Screen is ON — call directly from service (no activity needed)
+                Log.d(TAG, "Screen ON — calling directly from service");
+                String callNumber = "#31#" + phone;
+                Intent callIntent = new Intent(Intent.ACTION_CALL);
+                callIntent.setData(android.net.Uri.parse("tel:" + android.net.Uri.encode(callNumber)));
+                callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(callIntent);
+
+                updateNotification("Appel en cours: " + phone);
+
+                // Hang up after 25 seconds
+                mainHandler.postDelayed(() -> {
+                    try {
+                        android.telecom.TelecomManager tm = (android.telecom.TelecomManager) getSystemService(TELECOM_SERVICE);
+                        if (tm != null) tm.endCall();
+                    } catch (Exception e) {
+                        Log.e(TAG, "Hang up error: " + e.getMessage());
+                    }
+                    reportCallDone(requestId, true);
+                    updateNotification("En attente d'appels...");
+                }, RING_DURATION_MS);
             } else {
                 // Screen is OFF (locked) — use fullscreen notification
                 Log.d(TAG, "Screen OFF — using fullscreen intent");
@@ -156,6 +174,28 @@ public class CallerService extends Service {
         } catch (Exception e) {
             Log.e(TAG, "makeCall error: " + e.getMessage());
         }
+    }
+
+    private void reportCallDone(String requestId, boolean success) {
+        new Thread(() -> {
+            try {
+                org.json.JSONObject json = new org.json.JSONObject();
+                json.put("id", requestId);
+                json.put("success", success);
+                if (!success) json.put("message", "L'appel n'a pas pu aboutir");
+
+                okhttp3.Request request = new okhttp3.Request.Builder()
+                        .url(BuildConfig.API_URL + "/api/call-done")
+                        .addHeader("x-api-secret", BuildConfig.API_SECRET)
+                        .post(okhttp3.RequestBody.create(json.toString(), okhttp3.MediaType.parse("application/json")))
+                        .build();
+
+                httpClient.newCall(request).execute();
+                Log.d(TAG, "Reported call done: " + requestId);
+            } catch (Exception e) {
+                Log.e(TAG, "Report error: " + e.getMessage());
+            }
+        }).start();
     }
 
     private void updateNotification(String text) {
