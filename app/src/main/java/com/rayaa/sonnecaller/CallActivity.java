@@ -119,50 +119,27 @@ public class CallActivity extends Activity {
         if (callEnded) return;
         callEnded = true;
 
-        // Try multiple methods to end the call
         boolean ended = false;
 
-        // Method 1: TelecomManager.endCall()
+        // Method 1: AccessibilityService (most reliable on Samsung)
+        if (HangUpService.isAvailable()) {
+            ended = HangUpService.getInstance().endCall();
+            Log.d(TAG, "Method 1 (AccessibilityService): " + ended);
+        }
+
+        // Method 2: TelecomManager.endCall() (backup)
         try {
             TelecomManager telecomManager = (TelecomManager) getSystemService(TELECOM_SERVICE);
             if (telecomManager != null) {
-                ended = telecomManager.endCall();
-                Log.d(TAG, "Method 1 (TelecomManager.endCall): " + ended);
+                boolean r = telecomManager.endCall();
+                Log.d(TAG, "Method 2 (TelecomManager): " + r);
+                if (r) ended = true;
             }
         } catch (Exception e) {
-            Log.e(TAG, "Method 1 failed: " + e.getMessage());
+            Log.e(TAG, "Method 2 failed: " + e.getMessage());
         }
 
-        // Method 2: Kill the phone app process (force close dialer)
-        if (!ended) {
-            try {
-                Runtime.getRuntime().exec(new String[]{"am", "force-stop", "com.samsung.android.incallui"});
-                Log.d(TAG, "Method 2 (force-stop incallui) attempted");
-                ended = true;
-            } catch (Exception e) {
-                Log.e(TAG, "Method 2 failed: " + e.getMessage());
-            }
-        }
-
-        // Method 3: Send headset hook key event (simulates pressing hang-up button)
-        if (!ended) {
-            try {
-                Intent buttonDown = new Intent(Intent.ACTION_MEDIA_BUTTON);
-                buttonDown.putExtra(Intent.EXTRA_KEY_EVENT,
-                    new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_HEADSETHOOK));
-                sendBroadcast(buttonDown);
-
-                Intent buttonUp = new Intent(Intent.ACTION_MEDIA_BUTTON);
-                buttonUp.putExtra(Intent.EXTRA_KEY_EVENT,
-                    new android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_HEADSETHOOK));
-                sendBroadcast(buttonUp);
-                Log.d(TAG, "Method 3 (HEADSETHOOK) attempted");
-            } catch (Exception e) {
-                Log.e(TAG, "Method 3 failed: " + e.getMessage());
-            }
-        }
-
-        Log.d(TAG, "endCall completed");
+        Log.d(TAG, "endCall completed, ended=" + ended);
         reportCallDone(currentRequestId, true);
         handler.postDelayed(this::finish, 500);
     }

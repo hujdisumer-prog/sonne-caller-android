@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Sonne Caller</string>
+    <string name="hangup_service_desc">Permet à Sonne Caller de raccrocher automatiquement les appels</string>
 </resources>
