@@ -29,66 +29,135 @@ public class HangUpService extends AccessibilityService {
     public boolean endCall() {
         Log.d(TAG, "HangUpService: attempting to end call");
 
-        // Method 1: Try finding button by text/ID
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root != null) {
-            boolean found = findAndClickButton(root, "end call") ||
+            // Log ALL nodes on screen to find the end call button
+            logAllNodes(root, 0);
+
+            // Try to find and click any clickable node at the bottom of the screen
+            // The red end-call button is always at the bottom center
+            boolean found = findAndClickButton(root, "end") ||
                             findAndClickButton(root, "raccrocher") ||
                             findAndClickButton(root, "terminer") ||
                             findAndClickButton(root, "fin") ||
-                            findAndClickEndCallById(root);
+                            findAndClickEndCallById(root) ||
+                            clickBottomCenterButton(root);
 
             root.recycle();
 
             if (found) {
-                Log.d(TAG, "HangUpService: end call button clicked!");
+                Log.d(TAG, "HangUpService: button clicked!");
                 return true;
             }
         }
 
-        // Method 2: Click on the coordinates where the red button is on Samsung S9
-        // S9 screen: 1440x2960 — red button is bottom center
-        Log.d(TAG, "HangUpService: trying coordinate tap on red button");
+        // Fallback: tap on screen using display metrics
+        Log.d(TAG, "HangUpService: fallback - tapping screen center bottom");
+        android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
+        float screenW = metrics.widthPixels;
+        float screenH = metrics.heightPixels;
+
+        // Tap bottom center (where red button typically is)
+        float x = screenW / 2f;
+        float y = screenH * 0.85f; // 85% from top
+
+        Log.d(TAG, "HangUpService: screen=" + screenW + "x" + screenH + " tapping at " + x + "," + y);
+
+        tapAt(x, y);
+
+        // Also try lower
+        try { Thread.sleep(300); } catch (Exception e) {}
+        tapAt(x, screenH * 0.90f);
+
+        // And even lower
+        try { Thread.sleep(300); } catch (Exception e) {}
+        tapAt(x, screenH * 0.80f);
+
+        return true;
+    }
+
+    private void tapAt(float x, float y) {
         android.graphics.Path path = new android.graphics.Path();
-        // Bottom center of screen (red hang-up button position)
-        float x = 720f;  // center X
-        float y = 2500f; // near bottom Y
         path.moveTo(x, y);
         path.lineTo(x + 1, y + 1);
-
         android.accessibilityservice.GestureDescription.StrokeDescription stroke =
             new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 50);
         android.accessibilityservice.GestureDescription gesture =
             new android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build();
+        dispatchGesture(gesture, null, null);
+        Log.d(TAG, "HangUpService: tapped at " + x + "," + y);
+    }
 
-        boolean dispatched = dispatchGesture(gesture, new GestureResultCallback() {
-            @Override
-            public void onCompleted(android.accessibilityservice.GestureDescription gestureDescription) {
-                Log.d(TAG, "HangUpService: tap gesture completed");
+    /**
+     * Find the clickable button closest to bottom center of screen
+     */
+    private boolean clickBottomCenterButton(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+
+        android.graphics.Rect bounds = new android.graphics.Rect();
+        android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
+        int screenH = metrics.heightPixels;
+        int screenW = metrics.widthPixels;
+
+        // Find all clickable nodes in the bottom 30% of screen
+        AccessibilityNodeInfo bestNode = null;
+        int bestY = 0;
+
+        findBottomClickables(node, screenH, screenW, bounds);
+
+        return false; // clickBottomCenterButton is best-effort, tapAt handles it
+    }
+
+    private void findBottomClickables(AccessibilityNodeInfo node, int screenH, int screenW, android.graphics.Rect bounds) {
+        if (node == null) return;
+
+        node.getBoundsInScreen(bounds);
+        if (node.isClickable() && bounds.top > screenH * 0.65) {
+            int centerX = (bounds.left + bounds.right) / 2;
+            int centerY = (bounds.top + bounds.bottom) / 2;
+            Log.d(TAG, "Bottom clickable: centerX=" + centerX + " centerY=" + centerY +
+                       " text=" + node.getText() + " desc=" + node.getContentDescription() +
+                       " class=" + node.getClassName() + " id=" + node.getViewIdResourceName());
+
+            // If it's near center X and in bottom area, click it
+            if (Math.abs(centerX - screenW / 2) < screenW * 0.2) {
+                Log.d(TAG, "Clicking bottom-center button!");
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
             }
-            @Override
-            public void onCancelled(android.accessibilityservice.GestureDescription gestureDescription) {
-                Log.d(TAG, "HangUpService: tap gesture cancelled");
-            }
-        }, null);
-
-        Log.d(TAG, "HangUpService: gesture dispatched=" + dispatched);
-
-        // Also try different Y position (some Samsung UIs vary)
-        if (dispatched) {
-            try { Thread.sleep(300); } catch (Exception e) {}
-            // Try slightly higher position too
-            android.graphics.Path path2 = new android.graphics.Path();
-            path2.moveTo(720f, 2300f);
-            path2.lineTo(721f, 2301f);
-            android.accessibilityservice.GestureDescription.StrokeDescription stroke2 =
-                new android.accessibilityservice.GestureDescription.StrokeDescription(path2, 0, 50);
-            android.accessibilityservice.GestureDescription gesture2 =
-                new android.accessibilityservice.GestureDescription.Builder().addStroke(stroke2).build();
-            dispatchGesture(gesture2, null, null);
         }
 
-        return dispatched;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                findBottomClickables(child, screenH, screenW, bounds);
+                child.recycle();
+            }
+        }
+    }
+
+    private void logAllNodes(AccessibilityNodeInfo node, int depth) {
+        if (node == null || depth > 10) return;
+
+        String indent = "";
+        for (int i = 0; i < depth; i++) indent += "  ";
+
+        android.graphics.Rect bounds = new android.graphics.Rect();
+        node.getBoundsInScreen(bounds);
+
+        Log.d(TAG, indent + "Node: class=" + node.getClassName() +
+              " text=" + node.getText() +
+              " desc=" + node.getContentDescription() +
+              " id=" + node.getViewIdResourceName() +
+              " clickable=" + node.isClickable() +
+              " bounds=" + bounds);
+
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                logAllNodes(child, depth + 1);
+                child.recycle();
+            }
+        }
     }
 
     private boolean findAndClickButton(AccessibilityNodeInfo node, String text) {
