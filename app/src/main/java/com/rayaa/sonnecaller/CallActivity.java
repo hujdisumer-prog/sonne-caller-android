@@ -27,7 +27,7 @@ public class CallActivity extends Activity {
 
     private static final String TAG = "SonneCaller";
     private static final int RING_DURATION_MS = 25000;
-    private static final int MIN_RING_TIME_MS = 5000; // Let it ring at least 5 sec
+    private static final int MIN_RING_TIME_MS = 2000; // Let it ring at least 2 sec
 
     private PowerManager.WakeLock wakeLock;
     private boolean callEnded = false;
@@ -96,10 +96,12 @@ public class CallActivity extends Activity {
 
                     Log.d(TAG, "Check: elapsed=" + elapsed + "ms, audioMode=" + audioMode);
 
-                    // AudioManager.MODE_IN_COMMUNICATION (3) = call answered
+                    // MODE_IN_COMMUNICATION (3) or MODE_IN_CALL (2) = call answered or voicemail
                     // Only hang up if we've let it ring at least MIN_RING_TIME_MS
-                    if (elapsed > MIN_RING_TIME_MS && audioMode == AudioManager.MODE_IN_COMMUNICATION) {
-                        Log.d(TAG, "Call answered (audio in communication), hanging up");
+                    if (elapsed > MIN_RING_TIME_MS &&
+                        (audioMode == AudioManager.MODE_IN_COMMUNICATION ||
+                         audioMode == AudioManager.MODE_IN_CALL)) {
+                        Log.d(TAG, "Call answered/voicemail (audioMode=" + audioMode + "), hanging up");
                         endCall();
                         return;
                     }
@@ -116,8 +118,8 @@ public class CallActivity extends Activity {
                 }
             };
 
-            // Start checking after 3 seconds (give time for call to connect)
-            handler.postDelayed(checkAnsweredRunnable, 3000);
+            // Start checking after 1 second
+            handler.postDelayed(checkAnsweredRunnable, 1000);
 
         } catch (Exception e) {
             Log.e(TAG, "CallActivity: call error: " + e.getMessage());
