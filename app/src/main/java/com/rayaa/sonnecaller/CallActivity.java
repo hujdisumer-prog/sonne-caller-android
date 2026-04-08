@@ -27,7 +27,7 @@ public class CallActivity extends Activity {
 
     private static final String TAG = "SonneCaller";
     private static final int RING_DURATION_MS = 25000;
-    private static final int MIN_RING_TIME_MS = 2000; // Let it ring at least 2 sec
+    private static final int MIN_RING_TIME_MS = 0; // No delay, detect immediately
 
     private PowerManager.WakeLock wakeLock;
     private boolean callEnded = false;
