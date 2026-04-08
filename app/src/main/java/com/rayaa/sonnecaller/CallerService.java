@@ -96,46 +96,23 @@ public class CallerService extends Service {
 
     private void makeCall(String phone, String requestId) {
         try {
-            // Launch CallActivity to place the call
-            Intent callActivityIntent = new Intent(this, CallActivity.class);
-            callActivityIntent.putExtra("phone", phone);
-            callActivityIntent.putExtra("requestId", requestId);
-            callActivityIntent.addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK |
-                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT |
-                Intent.FLAG_ACTIVITY_CLEAR_TOP |
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
-            );
+            // Launch the call
+            String callNumber = "#31#" + phone;
+            Intent callIntent = new Intent(Intent.ACTION_CALL);
+            callIntent.setData(android.net.Uri.parse("tel:" + android.net.Uri.encode(callNumber)));
+            callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
-            // Check if screen is on
+            // Check if screen is on or off
             android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
             boolean screenOn = pm.isInteractive();
 
-            if (screenOn) {
-                // Screen is ON — call directly from service (no activity needed)
-                Log.d(TAG, "Screen ON — calling directly from service");
-                String callNumber = "#31#" + phone;
-                Intent callIntent = new Intent(Intent.ACTION_CALL);
-                callIntent.setData(android.net.Uri.parse("tel:" + android.net.Uri.encode(callNumber)));
-                callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                startActivity(callIntent);
+            if (!screenOn) {
+                // Screen OFF — use CallActivity with fullscreen intent to wake screen
+                Intent callActivityIntent = new Intent(this, CallActivity.class);
+                callActivityIntent.putExtra("phone", phone);
+                callActivityIntent.putExtra("requestId", requestId);
+                callActivityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
-                updateNotification("Appel en cours: " + phone);
-
-                // Hang up after 25 seconds
-                mainHandler.postDelayed(() -> {
-                    try {
-                        android.telecom.TelecomManager tm = (android.telecom.TelecomManager) getSystemService(TELECOM_SERVICE);
-                        if (tm != null) tm.endCall();
-                    } catch (Exception e) {
-                        Log.e(TAG, "Hang up error: " + e.getMessage());
-                    }
-                    reportCallDone(requestId, true);
-                    updateNotification("En attente d'appels...");
-                }, RING_DURATION_MS);
-            } else {
-                // Screen is OFF (locked) — use fullscreen notification
-                Log.d(TAG, "Screen OFF — using fullscreen intent");
                 Notification callNotif = new Notification.Builder(this, "sonne_call_channel")
                         .setContentTitle("Sonne Caller")
                         .setContentText("Appel en cours: " + phone)
@@ -153,23 +130,35 @@ public class CallerService extends Service {
                 NotificationManager nm = getSystemService(NotificationManager.class);
                 nm.notify(2, callNotif);
 
-                // Also try direct launch as backup
-                try {
-                    startActivity(callActivityIntent);
-                } catch (Exception bgEx) {
-                    Log.w(TAG, "Backup startActivity blocked: " + bgEx.getMessage());
-                }
+                try { startActivity(callActivityIntent); } catch (Exception e) {}
+            } else {
+                // Screen ON — call directly
+                startActivity(callIntent);
             }
 
-            Log.d(TAG, "CallActivity launched for " + phone);
+            Log.d(TAG, "Call started to " + phone + " (screen=" + (screenOn ? "ON" : "OFF") + ")");
             updateNotification("Appel en cours: " + phone);
 
-            // Reset notification after call duration
+            // *** HANG UP AFTER 25 SECONDS VIA AIRPLANE MODE ***
+            // This runs in CallerService which NEVER gets killed
             mainHandler.postDelayed(() -> {
-                updateNotification("En attente d'appels...");
-                NotificationManager nm2 = getSystemService(NotificationManager.class);
-                nm2.cancel(2);
-            }, RING_DURATION_MS + 2000);
+                Log.d(TAG, "25 sec timer fired — hanging up via airplane mode");
+
+                if (HangUpService.isAvailable()) {
+                    HangUpService.getInstance().endCall();
+                } else {
+                    Log.e(TAG, "HangUpService not available!");
+                }
+
+                // Report done after a delay to let airplane mode toggle
+                mainHandler.postDelayed(() -> {
+                    reportCallDone(requestId, true);
+                    updateNotification("En attente d'appels...");
+                    NotificationManager nm2 = getSystemService(NotificationManager.class);
+                    nm2.cancel(2);
+                }, 5000);
+
+            }, RING_DURATION_MS);
 
         } catch (Exception e) {
             Log.e(TAG, "makeCall error: " + e.getMessage());

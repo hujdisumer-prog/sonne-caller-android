@@ -38,27 +38,38 @@ public class HangUpService extends AccessibilityService {
     public boolean endCall() {
         Log.d(TAG, "HangUpService: ending call via quick settings airplane mode");
 
-        // Step 1: Pull down notification shade / quick settings
-        boolean opened = performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
-        Log.d(TAG, "HangUpService: opened quick settings: " + opened);
+        // Step 1: Press HOME to leave the call screen (Samsung blocks quick settings during call)
+        performGlobalAction(GLOBAL_ACTION_HOME);
+        Log.d(TAG, "HangUpService: pressed HOME");
 
-        // Step 2: Wait for panel to open, then find and click airplane mode
+        // Step 2: Wait 500ms, then open quick settings
         handler.postDelayed(() -> {
-            clickAirplaneMode();
+            boolean opened = performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
+            Log.d(TAG, "HangUpService: opened quick settings: " + opened);
 
-            // Step 3: Wait 2 sec for call to die, then turn airplane mode OFF
+            // Step 3: Wait for panel to appear, then click airplane mode
             handler.postDelayed(() -> {
                 clickAirplaneMode();
-                Log.d(TAG, "HangUpService: airplane mode toggled OFF");
 
-                // Step 4: Close quick settings
+                // Step 4: Wait 3 sec for call to die, then turn airplane mode OFF
                 handler.postDelayed(() -> {
-                    performGlobalAction(GLOBAL_ACTION_BACK);
-                    performGlobalAction(GLOBAL_ACTION_BACK);
-                    Log.d(TAG, "HangUpService: quick settings closed");
-                }, 500);
-            }, 2000);
-        }, 1000);
+                    // Re-open quick settings (it might have closed)
+                    performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
+
+                    handler.postDelayed(() -> {
+                        clickAirplaneMode();
+                        Log.d(TAG, "HangUpService: airplane mode toggled OFF");
+
+                        // Step 5: Close quick settings
+                        handler.postDelayed(() -> {
+                            performGlobalAction(GLOBAL_ACTION_BACK);
+                            performGlobalAction(GLOBAL_ACTION_HOME);
+                            Log.d(TAG, "HangUpService: done");
+                        }, 500);
+                    }, 1000);
+                }, 3000);
+            }, 1500);
+        }, 500);
 
         return true;
     }
