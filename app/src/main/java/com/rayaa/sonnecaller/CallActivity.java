@@ -111,8 +111,8 @@ public class CallActivity extends Activity {
                         return;
                     }
 
-                    // Check again in 2 seconds
-                    handler.postDelayed(this, 2000);
+                    // Check again in 1 second
+                    handler.postDelayed(this, 1000);
                 }
             };
 
