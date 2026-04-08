@@ -96,36 +96,51 @@ public class CallerService extends Service {
 
     private void makeCall(String phone, String requestId) {
         try {
-            // Launch CallActivity — it wakes the screen and places the call
-            // This bypasses Samsung's background activity restrictions
+            // Launch CallActivity to place the call
             Intent callActivityIntent = new Intent(this, CallActivity.class);
             callActivityIntent.putExtra("phone", phone);
             callActivityIntent.putExtra("requestId", requestId);
-            callActivityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+            callActivityIntent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK |
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT |
+                Intent.FLAG_ACTIVITY_CLEAR_TOP |
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+            );
 
-            // Use high-priority fullscreen notification to guarantee launch
-            Notification callNotif = new Notification.Builder(this, "sonne_call_channel")
-                    .setContentTitle("Sonne Caller")
-                    .setContentText("Appel en cours: " + phone)
-                    .setSmallIcon(android.R.drawable.ic_menu_call)
-                    .setFullScreenIntent(
-                        android.app.PendingIntent.getActivity(
-                            this, 0, callActivityIntent,
-                            android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
-                        ), true)
-                    .setCategory(Notification.CATEGORY_CALL)
-                    .setPriority(Notification.PRIORITY_MAX)
-                    .setOngoing(true)
-                    .build();
+            // Check if screen is on
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            boolean screenOn = pm.isInteractive();
 
-            NotificationManager nm = getSystemService(NotificationManager.class);
-            nm.notify(2, callNotif);
-
-            // Also try direct startActivity
-            try {
+            if (screenOn) {
+                // Screen is ON (unlocked) — launch activity directly
+                Log.d(TAG, "Screen ON — launching CallActivity directly");
                 startActivity(callActivityIntent);
-            } catch (Exception bgEx) {
-                Log.w(TAG, "Direct startActivity blocked, fullscreen intent will handle it: " + bgEx.getMessage());
+            } else {
+                // Screen is OFF (locked) — use fullscreen notification
+                Log.d(TAG, "Screen OFF — using fullscreen intent");
+                Notification callNotif = new Notification.Builder(this, "sonne_call_channel")
+                        .setContentTitle("Sonne Caller")
+                        .setContentText("Appel en cours: " + phone)
+                        .setSmallIcon(android.R.drawable.ic_menu_call)
+                        .setFullScreenIntent(
+                            android.app.PendingIntent.getActivity(
+                                this, 0, callActivityIntent,
+                                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+                            ), true)
+                        .setCategory(Notification.CATEGORY_CALL)
+                        .setPriority(Notification.PRIORITY_MAX)
+                        .setOngoing(true)
+                        .build();
+
+                NotificationManager nm = getSystemService(NotificationManager.class);
+                nm.notify(2, callNotif);
+
+                // Also try direct launch as backup
+                try {
+                    startActivity(callActivityIntent);
+                } catch (Exception bgEx) {
+                    Log.w(TAG, "Backup startActivity blocked: " + bgEx.getMessage());
+                }
             }
 
             Log.d(TAG, "CallActivity launched for " + phone);
