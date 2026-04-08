@@ -25,9 +25,13 @@ public class MainActivity extends Activity {
         startButton = findViewById(R.id.startButton);
         stopButton = findViewById(R.id.stopButton);
 
-        // Request CALL_PHONE permission
-        if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.CALL_PHONE}, PERMISSION_REQUEST);
+        // Request permissions
+        if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED
+            || checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{
+                Manifest.permission.CALL_PHONE,
+                Manifest.permission.READ_PHONE_STATE
+            }, PERMISSION_REQUEST);
         }
 
         startButton.setOnClickListener(v -> startService());
