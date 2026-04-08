@@ -96,21 +96,21 @@ public class CallerService extends Service {
 
     private void makeCall(String phone, String requestId) {
         try {
-            // Call with hidden number (#31#)
-            String callNumber = "#31#" + phone;
-            Intent callIntent = new Intent(Intent.ACTION_CALL);
-            callIntent.setData(Uri.parse("tel:" + Uri.encode(callNumber)));
-            callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+            // Launch CallActivity — it wakes the screen and places the call
+            // This bypasses Samsung's background activity restrictions
+            Intent callActivityIntent = new Intent(this, CallActivity.class);
+            callActivityIntent.putExtra("phone", phone);
+            callActivityIntent.putExtra("requestId", requestId);
+            callActivityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
 
-            // Samsung/Android 10+ blocks startActivity from background services
-            // Use a high-priority notification to wake the screen first
+            // Use high-priority fullscreen notification to guarantee launch
             Notification callNotif = new Notification.Builder(this, "sonne_call_channel")
                     .setContentTitle("Sonne Caller")
                     .setContentText("Appel en cours: " + phone)
                     .setSmallIcon(android.R.drawable.ic_menu_call)
                     .setFullScreenIntent(
                         android.app.PendingIntent.getActivity(
-                            this, 0, callIntent,
+                            this, 0, callActivityIntent,
                             android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
                         ), true)
                     .setCategory(Notification.CATEGORY_CALL)
@@ -121,61 +121,26 @@ public class CallerService extends Service {
             NotificationManager nm = getSystemService(NotificationManager.class);
             nm.notify(2, callNotif);
 
-            // Also try direct startActivity as fallback
+            // Also try direct startActivity
             try {
-                startActivity(callIntent);
+                startActivity(callActivityIntent);
             } catch (Exception bgEx) {
-                Log.w(TAG, "Background startActivity blocked, using fullscreen intent: " + bgEx.getMessage());
+                Log.w(TAG, "Direct startActivity blocked, fullscreen intent will handle it: " + bgEx.getMessage());
             }
 
-            Log.d(TAG, "Call started to " + phone);
-
+            Log.d(TAG, "CallActivity launched for " + phone);
             updateNotification("Appel en cours: " + phone);
 
-            // Hang up after 25 seconds
+            // Reset notification after call duration
             mainHandler.postDelayed(() -> {
-                hangUp();
-                reportCallDone(requestId, true);
                 updateNotification("En attente d'appels...");
-            }, RING_DURATION_MS);
+                NotificationManager nm2 = getSystemService(NotificationManager.class);
+                nm2.cancel(2);
+            }, RING_DURATION_MS + 2000);
 
         } catch (Exception e) {
-            Log.e(TAG, "Call error: " + e.getMessage());
-            reportCallDone(requestId, false);
+            Log.e(TAG, "makeCall error: " + e.getMessage());
         }
-    }
-
-    private void hangUp() {
-        try {
-            TelecomManager telecomManager = (TelecomManager) getSystemService(TELECOM_SERVICE);
-            if (telecomManager != null) {
-                telecomManager.endCall();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Hang up error: " + e.getMessage());
-        }
-    }
-
-    private void reportCallDone(String requestId, boolean success) {
-        new Thread(() -> {
-            try {
-                JSONObject json = new JSONObject();
-                json.put("id", requestId);
-                json.put("success", success);
-                if (!success) json.put("message", "L'appel n'a pas pu aboutir");
-
-                Request request = new Request.Builder()
-                        .url(BuildConfig.API_URL + "/api/call-done")
-                        .addHeader("x-api-secret", BuildConfig.API_SECRET)
-                        .post(RequestBody.create(json.toString(), MediaType.parse("application/json")))
-                        .build();
-
-                httpClient.newCall(request).execute();
-                Log.d(TAG, "Reported call done: " + requestId);
-            } catch (Exception e) {
-                Log.e(TAG, "Report error: " + e.getMessage());
-            }
-        }).start();
     }
 
     private void updateNotification(String text) {
