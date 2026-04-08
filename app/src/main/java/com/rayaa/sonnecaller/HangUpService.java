@@ -2,7 +2,12 @@ package com.rayaa.sonnecaller;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
-import android.os.Bundle;
+import android.accessibilityservice.GestureDescription;
+import android.graphics.Path;
+import android.graphics.Rect;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -10,13 +15,17 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import java.util.List;
 
 /**
- * AccessibilityService that ends calls by finding and clicking
- * the red "end call" button on Samsung's call screen.
+ * AccessibilityService that ends calls by:
+ * 1. Opening quick settings panel
+ * 2. Tapping the airplane mode toggle
+ * 3. Waiting 2 sec for call to drop
+ * 4. Tapping airplane mode again to turn it off
  */
 public class HangUpService extends AccessibilityService {
 
     private static final String TAG = "SonneCaller";
     private static HangUpService instance = null;
+    private Handler handler = new Handler(Looper.getMainLooper());
 
     public static HangUpService getInstance() {
         return instance;
@@ -27,160 +36,92 @@ public class HangUpService extends AccessibilityService {
     }
 
     public boolean endCall() {
-        Log.d(TAG, "HangUpService: attempting to end call");
+        Log.d(TAG, "HangUpService: ending call via quick settings airplane mode");
 
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root != null) {
-            // Log ALL nodes on screen to find the end call button
-            logAllNodes(root, 0);
+        // Step 1: Pull down notification shade / quick settings
+        boolean opened = performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
+        Log.d(TAG, "HangUpService: opened quick settings: " + opened);
 
-            // Try to find and click any clickable node at the bottom of the screen
-            // The red end-call button is always at the bottom center
-            boolean found = findAndClickButton(root, "end") ||
-                            findAndClickButton(root, "raccrocher") ||
-                            findAndClickButton(root, "terminer") ||
-                            findAndClickButton(root, "fin") ||
-                            findAndClickEndCallById(root) ||
-                            clickBottomCenterButton(root);
+        // Step 2: Wait for panel to open, then find and click airplane mode
+        handler.postDelayed(() -> {
+            clickAirplaneMode();
 
-            root.recycle();
+            // Step 3: Wait 2 sec for call to die, then turn airplane mode OFF
+            handler.postDelayed(() -> {
+                clickAirplaneMode();
+                Log.d(TAG, "HangUpService: airplane mode toggled OFF");
 
-            if (found) {
-                Log.d(TAG, "HangUpService: button clicked!");
-                return true;
-            }
-        }
-
-        // Fallback: tap on screen using display metrics
-        Log.d(TAG, "HangUpService: fallback - tapping screen center bottom");
-        android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
-        float screenW = metrics.widthPixels;
-        float screenH = metrics.heightPixels;
-
-        // Tap bottom center (where red button typically is)
-        float x = screenW / 2f;
-        float y = screenH * 0.85f; // 85% from top
-
-        Log.d(TAG, "HangUpService: screen=" + screenW + "x" + screenH + " tapping at " + x + "," + y);
-
-        tapAt(x, y);
-
-        // Also try lower
-        try { Thread.sleep(300); } catch (Exception e) {}
-        tapAt(x, screenH * 0.90f);
-
-        // And even lower
-        try { Thread.sleep(300); } catch (Exception e) {}
-        tapAt(x, screenH * 0.80f);
+                // Step 4: Close quick settings
+                handler.postDelayed(() -> {
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                    Log.d(TAG, "HangUpService: quick settings closed");
+                }, 500);
+            }, 2000);
+        }, 1000);
 
         return true;
     }
 
-    private void tapAt(float x, float y) {
-        android.graphics.Path path = new android.graphics.Path();
-        path.moveTo(x, y);
-        path.lineTo(x + 1, y + 1);
-        android.accessibilityservice.GestureDescription.StrokeDescription stroke =
-            new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 50);
-        android.accessibilityservice.GestureDescription gesture =
-            new android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build();
-        dispatchGesture(gesture, null, null);
-        Log.d(TAG, "HangUpService: tapped at " + x + "," + y);
+    private void clickAirplaneMode() {
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) {
+            Log.d(TAG, "clickAirplaneMode: no root window");
+            return;
+        }
+
+        // Try to find airplane mode toggle by text
+        boolean found = findAndClick(root, "avion") ||
+                        findAndClick(root, "airplane") ||
+                        findAndClick(root, "flight") ||
+                        findAndClick(root, "vol");
+
+        if (!found) {
+            // Try by description
+            found = findAndClickByDesc(root, "avion") ||
+                    findAndClickByDesc(root, "airplane") ||
+                    findAndClickByDesc(root, "flight");
+        }
+
+        root.recycle();
+
+        if (found) {
+            Log.d(TAG, "clickAirplaneMode: clicked!");
+        } else {
+            Log.d(TAG, "clickAirplaneMode: not found, logging all nodes");
+            AccessibilityNodeInfo root2 = getRootInActiveWindow();
+            if (root2 != null) {
+                logNodes(root2, 0);
+                root2.recycle();
+            }
+        }
     }
 
-    /**
-     * Find the clickable button closest to bottom center of screen
-     */
-    private boolean clickBottomCenterButton(AccessibilityNodeInfo node) {
+    private boolean findAndClick(AccessibilityNodeInfo node, String text) {
         if (node == null) return false;
 
-        android.graphics.Rect bounds = new android.graphics.Rect();
-        android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
-        int screenH = metrics.heightPixels;
-        int screenW = metrics.widthPixels;
-
-        // Find all clickable nodes in the bottom 30% of screen
-        AccessibilityNodeInfo bestNode = null;
-        int bestY = 0;
-
-        findBottomClickables(node, screenH, screenW, bounds);
-
-        return false; // clickBottomCenterButton is best-effort, tapAt handles it
-    }
-
-    private void findBottomClickables(AccessibilityNodeInfo node, int screenH, int screenW, android.graphics.Rect bounds) {
-        if (node == null) return;
-
-        node.getBoundsInScreen(bounds);
-        if (node.isClickable() && bounds.top > screenH * 0.65) {
-            int centerX = (bounds.left + bounds.right) / 2;
-            int centerY = (bounds.top + bounds.bottom) / 2;
-            Log.d(TAG, "Bottom clickable: centerX=" + centerX + " centerY=" + centerY +
-                       " text=" + node.getText() + " desc=" + node.getContentDescription() +
-                       " class=" + node.getClassName() + " id=" + node.getViewIdResourceName());
-
-            // If it's near center X and in bottom area, click it
-            if (Math.abs(centerX - screenW / 2) < screenW * 0.2) {
-                Log.d(TAG, "Clicking bottom-center button!");
-                node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            }
-        }
-
-        for (int i = 0; i < node.getChildCount(); i++) {
-            AccessibilityNodeInfo child = node.getChild(i);
-            if (child != null) {
-                findBottomClickables(child, screenH, screenW, bounds);
-                child.recycle();
-            }
-        }
-    }
-
-    private void logAllNodes(AccessibilityNodeInfo node, int depth) {
-        if (node == null || depth > 10) return;
-
-        String indent = "";
-        for (int i = 0; i < depth; i++) indent += "  ";
-
-        android.graphics.Rect bounds = new android.graphics.Rect();
-        node.getBoundsInScreen(bounds);
-
-        Log.d(TAG, indent + "Node: class=" + node.getClassName() +
-              " text=" + node.getText() +
-              " desc=" + node.getContentDescription() +
-              " id=" + node.getViewIdResourceName() +
-              " clickable=" + node.isClickable() +
-              " bounds=" + bounds);
-
-        for (int i = 0; i < node.getChildCount(); i++) {
-            AccessibilityNodeInfo child = node.getChild(i);
-            if (child != null) {
-                logAllNodes(child, depth + 1);
-                child.recycle();
-            }
-        }
-    }
-
-    private boolean findAndClickButton(AccessibilityNodeInfo node, String text) {
-        if (node == null) return false;
-
-        // Check this node
         CharSequence nodeText = node.getText();
-        CharSequence nodeDesc = node.getContentDescription();
-
         if (nodeText != null && nodeText.toString().toLowerCase().contains(text.toLowerCase())) {
-            Log.d(TAG, "Found button by text: " + nodeText);
-            return clickNode(node);
-        }
-        if (nodeDesc != null && nodeDesc.toString().toLowerCase().contains(text.toLowerCase())) {
-            Log.d(TAG, "Found button by description: " + nodeDesc);
-            return clickNode(node);
+            Log.d(TAG, "Found by text: " + nodeText + " clickable=" + node.isClickable());
+            if (node.isClickable()) {
+                return node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            }
+            // Try parent
+            AccessibilityNodeInfo parent = node.getParent();
+            if (parent != null) {
+                if (parent.isClickable()) {
+                    boolean r = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    parent.recycle();
+                    return r;
+                }
+                parent.recycle();
+            }
         }
 
-        // Check children
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) {
-                if (findAndClickButton(child, text)) {
+                if (findAndClick(child, text)) {
                     child.recycle();
                     return true;
                 }
@@ -190,50 +131,62 @@ public class HangUpService extends AccessibilityService {
         return false;
     }
 
-    private boolean findAndClickEndCallById(AccessibilityNodeInfo root) {
-        // Samsung uses specific view IDs for end call button
-        String[] possibleIds = {
-            "com.samsung.android.incallui:id/end_call_button",
-            "com.samsung.android.incallui:id/floating_end_call_action_button",
-            "com.samsung.android.incallui:id/end_button",
-            "com.android.incallui:id/end_call_button",
-            "com.android.dialer:id/incall_end_call",
-        };
+    private boolean findAndClickByDesc(AccessibilityNodeInfo node, String text) {
+        if (node == null) return false;
 
-        for (String id : possibleIds) {
-            List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByViewId(id);
-            if (nodes != null && !nodes.isEmpty()) {
-                Log.d(TAG, "Found end call button by ID: " + id);
-                boolean result = clickNode(nodes.get(0));
-                for (AccessibilityNodeInfo n : nodes) n.recycle();
-                return result;
+        CharSequence desc = node.getContentDescription();
+        if (desc != null && desc.toString().toLowerCase().contains(text.toLowerCase())) {
+            Log.d(TAG, "Found by desc: " + desc + " clickable=" + node.isClickable());
+            if (node.isClickable()) {
+                return node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            }
+            AccessibilityNodeInfo parent = node.getParent();
+            if (parent != null) {
+                if (parent.isClickable()) {
+                    boolean r = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    parent.recycle();
+                    return r;
+                }
+                parent.recycle();
+            }
+        }
+
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                if (findAndClickByDesc(child, text)) {
+                    child.recycle();
+                    return true;
+                }
+                child.recycle();
             }
         }
         return false;
     }
 
-    private boolean clickNode(AccessibilityNodeInfo node) {
-        if (node.isClickable()) {
-            return node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+    private void logNodes(AccessibilityNodeInfo node, int depth) {
+        if (node == null || depth > 8) return;
+        String indent = "";
+        for (int i = 0; i < depth; i++) indent += "  ";
+        Log.d(TAG, indent + "class=" + node.getClassName() +
+              " text=" + node.getText() +
+              " desc=" + node.getContentDescription() +
+              " click=" + node.isClickable());
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                logNodes(child, depth + 1);
+                child.recycle();
+            }
         }
-        // Try parent if node itself is not clickable
-        AccessibilityNodeInfo parent = node.getParent();
-        if (parent != null && parent.isClickable()) {
-            boolean result = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            parent.recycle();
-            return result;
-        }
-        return false;
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // Not needed
     }
 
     @Override
     public void onInterrupt() {
-        Log.d(TAG, "HangUpService: interrupted");
     }
 
     @Override
@@ -242,7 +195,8 @@ public class HangUpService extends AccessibilityService {
         instance = this;
 
         AccessibilityServiceInfo info = getServiceInfo();
-        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED |
+                          AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
         info.flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
                      AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
