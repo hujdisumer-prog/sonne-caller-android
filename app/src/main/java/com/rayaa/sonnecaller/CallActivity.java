@@ -7,7 +7,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
-import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -17,24 +16,17 @@ import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.view.WindowManager;
 
-/**
- * Places a call, lets it ring, and hangs up:
- * - After 25 seconds max (nobody answers)
- * - When the person answers (detected by audio routing change)
- * - When voicemail picks up
- */
 public class CallActivity extends Activity {
 
     private static final String TAG = "SonneCaller";
     private static final int RING_DURATION_MS = 25000;
-    private static final int MIN_RING_TIME_MS = 0; // No delay, detect immediately
 
     private PowerManager.WakeLock wakeLock;
     private boolean callEnded = false;
     private String currentRequestId;
     private Handler handler;
-    private long callStartTime;
-    private Runnable checkAnsweredRunnable;
+    private BroadcastReceiver phoneStateReceiver;
+    private boolean callWasOffhook = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -60,11 +52,37 @@ public class CallActivity extends Activity {
         currentRequestId = getIntent().getStringExtra("requestId");
 
         if (phone != null) {
+            registerPhoneStateReceiver();
             makeCall(phone);
         } else {
             Log.e(TAG, "CallActivity: no phone number");
             finish();
         }
+    }
+
+    private void registerPhoneStateReceiver() {
+        phoneStateReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String state = intent.getStringExtra(TelephonyManager.EXTRA_STATE);
+                Log.d(TAG, "Phone state broadcast: " + state);
+
+                if (TelephonyManager.EXTRA_STATE_OFFHOOK.equals(state)) {
+                    // Call is active (dialing or answered)
+                    callWasOffhook = true;
+                    Log.d(TAG, "OFFHOOK detected");
+                }
+
+                if (TelephonyManager.EXTRA_STATE_IDLE.equals(state) && callWasOffhook) {
+                    // Call ended by itself (person hung up, voicemail ended, etc.)
+                    Log.d(TAG, "IDLE after OFFHOOK — call ended naturally");
+                    endCall();
+                }
+            }
+        };
+
+        IntentFilter filter = new IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED);
+        registerReceiver(phoneStateReceiver, filter);
     }
 
     private void makeCall(String phone) {
@@ -80,46 +98,15 @@ public class CallActivity extends Activity {
             callIntent.setData(Uri.parse("tel:" + Uri.encode(callNumber)));
             startActivity(callIntent);
 
-            callStartTime = System.currentTimeMillis();
             Log.d(TAG, "CallActivity: call started to " + phone);
 
-            // Check every 2 seconds if the call was answered
-            // Detect answer by checking if audio mode changes to MODE_IN_COMMUNICATION
-            checkAnsweredRunnable = new Runnable() {
-                @Override
-                public void run() {
-                    if (callEnded) return;
-
-                    long elapsed = System.currentTimeMillis() - callStartTime;
-                    AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-                    int audioMode = am.getMode();
-
-                    Log.d(TAG, "Check: elapsed=" + elapsed + "ms, audioMode=" + audioMode);
-
-                    // MODE_IN_COMMUNICATION (3) or MODE_IN_CALL (2) = call answered or voicemail
-                    // Only hang up if we've let it ring at least MIN_RING_TIME_MS
-                    if (elapsed > MIN_RING_TIME_MS &&
-                        (audioMode == AudioManager.MODE_IN_COMMUNICATION ||
-                         audioMode == AudioManager.MODE_IN_CALL)) {
-                        Log.d(TAG, "Call answered/voicemail (audioMode=" + audioMode + "), hanging up");
-                        endCall();
-                        return;
-                    }
-
-                    // Max duration reached
-                    if (elapsed >= RING_DURATION_MS) {
-                        Log.d(TAG, "Max ring duration reached, hanging up");
-                        endCall();
-                        return;
-                    }
-
-                    // Check again in 1 second
-                    handler.postDelayed(this, 1000);
+            // Safety: max 25 seconds
+            handler.postDelayed(() -> {
+                if (!callEnded) {
+                    Log.d(TAG, "Max duration reached, hanging up");
+                    endCall();
                 }
-            };
-
-            // Start checking after 1 second
-            handler.postDelayed(checkAnsweredRunnable, 1000);
+            }, RING_DURATION_MS);
 
         } catch (Exception e) {
             Log.e(TAG, "CallActivity: call error: " + e.getMessage());
@@ -132,19 +119,14 @@ public class CallActivity extends Activity {
         if (callEnded) return;
         callEnded = true;
 
-        // Remove pending checks
-        if (checkAnsweredRunnable != null) {
-            handler.removeCallbacks(checkAnsweredRunnable);
-        }
-
         try {
             TelecomManager telecomManager = (TelecomManager) getSystemService(TELECOM_SERVICE);
             if (telecomManager != null) {
                 telecomManager.endCall();
-                Log.d(TAG, "CallActivity: call ended");
+                Log.d(TAG, "Call ended");
             }
         } catch (Exception e) {
-            Log.e(TAG, "CallActivity: hang up error: " + e.getMessage());
+            Log.e(TAG, "Hang up error: " + e.getMessage());
         }
         reportCallDone(currentRequestId, true);
         handler.postDelayed(this::finish, 500);
@@ -167,17 +149,17 @@ public class CallActivity extends Activity {
                         .build();
 
                 client.newCall(request).execute();
-                Log.d(TAG, "CallActivity: reported call done: " + requestId);
+                Log.d(TAG, "Reported call done: " + requestId);
             } catch (Exception e) {
-                Log.e(TAG, "CallActivity: report error: " + e.getMessage());
+                Log.e(TAG, "Report error: " + e.getMessage());
             }
         }).start();
     }
 
     @Override
     protected void onDestroy() {
-        if (checkAnsweredRunnable != null) {
-            handler.removeCallbacks(checkAnsweredRunnable);
+        if (phoneStateReceiver != null) {
+            try { unregisterReceiver(phoneStateReceiver); } catch (Exception e) {}
         }
         if (wakeLock != null && wakeLock.isHeld()) {
             wakeLock.release();
