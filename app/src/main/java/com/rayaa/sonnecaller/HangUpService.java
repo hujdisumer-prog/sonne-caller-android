@@ -32,6 +32,11 @@ public class HangUpService extends AccessibilityService {
     public static boolean isAvailable() { return instance != null; }
 
     public void prepareForCall(CallDoneCallback onDone) {
+        // Cancel any pending actions from previous call
+        handler.removeCallbacksAndMessages(null);
+        cancelTimeout(callButtonTimeoutRunnable);
+        cancelTimeout(ringTimeoutRunnable);
+
         this.callback = onDone;
         this.state = CallState.WAITING_CALL_BUTTON;
 
@@ -128,18 +133,10 @@ public class HangUpService extends AccessibilityService {
     }
 
     private void handleInCall(AccessibilityNodeInfo root) {
-        // Check if call was answered — timer text like "0:00", "0:01"
+        // Only use timer text ("0:00", "0:01") to detect answered call
+        // Do NOT use mute/speaker buttons — they appear during ringing too
         if (hasTimerText(root)) {
             Log.d(TAG, "Call answered (timer detected) — ending immediately!");
-            endWhatsAppCall();
-            finishCall(true);
-            return;
-        }
-
-        // Also detect answered by checking if "Ringing" text disappeared
-        // and we see call control buttons (mute, speaker, etc.)
-        if (hasAnsweredIndicator(root)) {
-            Log.d(TAG, "Call answered (UI indicator) — ending immediately!");
             endWhatsAppCall();
             finishCall(true);
         }
@@ -184,33 +181,6 @@ public class HangUpService extends AccessibilityService {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) {
                 boolean found = hasRingingIndicator(child);
-                child.recycle();
-                if (found) return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Detect if the call was answered by looking for mute/speaker buttons
-     * which only appear when the call is connected
-     */
-    private boolean hasAnsweredIndicator(AccessibilityNodeInfo node) {
-        if (node == null) return false;
-
-        CharSequence desc = node.getContentDescription();
-        if (desc != null) {
-            String d = desc.toString().toLowerCase();
-            if (d.contains("mute") || d.contains("muet") || d.contains("micro") ||
-                d.contains("speaker") || d.contains("haut-parleur")) {
-                return true;
-            }
-        }
-
-        for (int i = 0; i < node.getChildCount(); i++) {
-            AccessibilityNodeInfo child = node.getChild(i);
-            if (child != null) {
-                boolean found = hasAnsweredIndicator(child);
                 child.recycle();
                 if (found) return true;
             }
