@@ -263,9 +263,9 @@ public class HangUpService extends AccessibilityService {
 
         CharSequence nodeText = node.getText();
         if (nodeText != null) {
-            String textStr = nodeText.toString().trim();
+            String textLower = nodeText.toString().trim().toLowerCase();
             for (String target : texts) {
-                if (textStr.equalsIgnoreCase(target)) {
+                if (textLower.contains(target.toLowerCase())) {
                     if (node.isClickable()) {
                         node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                         return true;
