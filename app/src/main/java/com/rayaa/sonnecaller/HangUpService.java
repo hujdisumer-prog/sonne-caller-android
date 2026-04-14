@@ -293,8 +293,8 @@ public class HangUpService extends AccessibilityService {
             int screenWidth = metrics.widthPixels;
             int screenHeight = metrics.heightPixels;
 
-            // WhatsApp end call button is at bottom-center, ~85% down the screen
-            float tapX = screenWidth / 2f;
+            // WhatsApp end call button is at bottom-RIGHT of screen
+            float tapX = screenWidth * 0.85f;
             float tapY = screenHeight * 0.85f;
 
             Log.d(TAG, "Tapping at (" + tapX + ", " + tapY + ") to end call");
@@ -318,18 +318,19 @@ public class HangUpService extends AccessibilityService {
                 }
             }, null);
 
-            // Try a second tap slightly lower in case the button position varies
+            // Second tap slightly different position
             handler.postDelayed(() -> {
-                float tapY2 = screenHeight * 0.9f;
+                float tapX2 = screenWidth * 0.80f;
+                float tapY2 = screenHeight * 0.90f;
                 Path path2 = new Path();
-                path2.moveTo(tapX, tapY2);
+                path2.moveTo(tapX2, tapY2);
 
                 GestureDescription gesture2 = new GestureDescription.Builder()
                         .addStroke(new GestureDescription.StrokeDescription(path2, 0, 100))
                         .build();
 
                 dispatchGesture(gesture2, null, null);
-                Log.d(TAG, "Second tap at (" + tapX + ", " + tapY2 + ")");
+                Log.d(TAG, "Second tap at (" + tapX2 + ", " + tapY2 + ")");
             }, 400);
 
         } catch (Exception e) {
