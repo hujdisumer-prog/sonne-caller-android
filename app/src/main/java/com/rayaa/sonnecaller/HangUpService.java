@@ -17,7 +17,7 @@ public class HangUpService extends AccessibilityService {
 
     private static final String WA_PACKAGE = "com.whatsapp.w4b";
     private static final int CALL_BUTTON_TIMEOUT_MS = 8000;
-    private static final int RING_DURATION_MS = 10000;
+    private static final int RING_DURATION_MS = 15000;
 
     private enum CallState { IDLE, WAITING_CALL_BUTTON, WAITING_CONFIRM, IN_CALL, ENDED }
 
