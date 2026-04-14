@@ -37,8 +37,8 @@ public class HangUpService extends AccessibilityService {
 
         callButtonTimeoutRunnable = () -> {
             if (state == CallState.WAITING_CALL_BUTTON || state == CallState.WAITING_CONFIRM) {
-                Log.e(TAG, "Timeout — could not complete call setup");
-                finishCall(false);
+                Log.e(TAG, "Timeout — could not complete call setup (state=" + state + ")");
+                forceEndCall();
             }
         };
         handler.postDelayed(callButtonTimeoutRunnable, CALL_BUTTON_TIMEOUT_MS);
@@ -48,7 +48,7 @@ public class HangUpService extends AccessibilityService {
 
     public void forceEndCall() {
         if (state == CallState.ENDED) return;
-        Log.d(TAG, "Force ending call");
+        Log.d(TAG, "Force ending call (state=" + state + ")");
         endWhatsAppCall();
         finishCall(true);
     }
@@ -87,8 +87,6 @@ public class HangUpService extends AccessibilityService {
     }
 
     private void handleWaitingConfirm(AccessibilityNodeInfo root) {
-        // Try clicking the confirm button in the popup
-        // WhatsApp shows "Appeler" / "Call" / "Start voice call" etc.
         if (clickNodeByText(root, new String[]{
                 "Appeler", "APPELER",
                 "Call", "CALL",
@@ -102,41 +100,51 @@ public class HangUpService extends AccessibilityService {
                 "\u041f\u043e\u0437\u0432\u043e\u043d\u0438\u0442\u044c"
         })) {
             Log.d(TAG, "Confirm button clicked — call starting!");
-            state = CallState.IN_CALL;
-            cancelTimeout(callButtonTimeoutRunnable);
-
-            ringTimeoutRunnable = () -> {
-                if (state == CallState.IN_CALL) {
-                    Log.d(TAG, "Ring timeout (10s) — ending call");
-                    endWhatsAppCall();
-                    finishCall(true);
-                }
-            };
-            handler.postDelayed(ringTimeoutRunnable, RING_DURATION_MS);
-        }
-        // Also try by content description in case it's not text-based
-        else if (clickNodeByDescriptions(root, new String[]{
+            startInCallState();
+        } else if (clickNodeByDescriptions(root, new String[]{
                 "Call", "Appeler", "Start voice call",
                 "D\u00e9marrer un appel vocal"
         })) {
             Log.d(TAG, "Confirm button clicked (via description) — call starting!");
-            state = CallState.IN_CALL;
-            cancelTimeout(callButtonTimeoutRunnable);
-
-            ringTimeoutRunnable = () -> {
-                if (state == CallState.IN_CALL) {
-                    Log.d(TAG, "Ring timeout (10s) — ending call");
-                    endWhatsAppCall();
-                    finishCall(true);
-                }
-            };
-            handler.postDelayed(ringTimeoutRunnable, RING_DURATION_MS);
+            startInCallState();
+        }
+        // If we detect ringing text or timer, the call started without confirm popup
+        else if (hasRingingIndicator(root)) {
+            Log.d(TAG, "Call started without confirm — already ringing");
+            startInCallState();
         }
     }
 
+    private void startInCallState() {
+        state = CallState.IN_CALL;
+        cancelTimeout(callButtonTimeoutRunnable);
+
+        // Immediate hangup: end call right away (0 seconds after connection)
+        // The 10s timer is for when nobody answers (just let it ring)
+        ringTimeoutRunnable = () -> {
+            if (state == CallState.IN_CALL) {
+                Log.d(TAG, "Ring timeout (10s) — ending call");
+                endWhatsAppCall();
+                finishCall(true);
+            }
+        };
+        handler.postDelayed(ringTimeoutRunnable, RING_DURATION_MS);
+        Log.d(TAG, "IN_CALL state — 10s ring timeout started");
+    }
+
     private void handleInCall(AccessibilityNodeInfo root) {
+        // Check if call was answered — timer text like "0:00", "0:01"
         if (hasTimerText(root)) {
-            Log.d(TAG, "Call answered — ending immediately");
+            Log.d(TAG, "Call answered (timer detected) — ending immediately!");
+            endWhatsAppCall();
+            finishCall(true);
+            return;
+        }
+
+        // Also detect answered by checking if "Ringing" text disappeared
+        // and we see call control buttons (mute, speaker, etc.)
+        if (hasAnsweredIndicator(root)) {
+            Log.d(TAG, "Call answered (UI indicator) — ending immediately!");
             endWhatsAppCall();
             finishCall(true);
         }
@@ -162,9 +170,59 @@ public class HangUpService extends AccessibilityService {
     }
 
     /**
-     * Find and click a node by content description.
-     * Skips video call buttons.
+     * Detect if the call screen is showing "Ringing" or "Calling" indicator
      */
+    private boolean hasRingingIndicator(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+
+        CharSequence text = node.getText();
+        if (text != null) {
+            String t = text.toString().toLowerCase();
+            if (t.contains("ringing") || t.contains("calling") ||
+                t.contains("sonne") || t.contains("appel en cours") ||
+                t.contains("\u00e7a sonne") || t.contains("sonnerie")) {
+                return true;
+            }
+        }
+
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                boolean found = hasRingingIndicator(child);
+                child.recycle();
+                if (found) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Detect if the call was answered by looking for mute/speaker buttons
+     * which only appear when the call is connected
+     */
+    private boolean hasAnsweredIndicator(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+
+        CharSequence desc = node.getContentDescription();
+        if (desc != null) {
+            String d = desc.toString().toLowerCase();
+            if (d.contains("mute") || d.contains("muet") || d.contains("micro") ||
+                d.contains("speaker") || d.contains("haut-parleur")) {
+                return true;
+            }
+        }
+
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                boolean found = hasAnsweredIndicator(child);
+                child.recycle();
+                if (found) return true;
+            }
+        }
+        return false;
+    }
+
     private boolean clickNodeByDescriptions(AccessibilityNodeInfo node, String[] descriptions) {
         if (node == null) return false;
 
@@ -200,9 +258,6 @@ public class HangUpService extends AccessibilityService {
         return false;
     }
 
-    /**
-     * Find and click a node by its text content (for popup buttons).
-     */
     private boolean clickNodeByText(AccessibilityNodeInfo node, String[] texts) {
         if (node == null) return false;
 
@@ -236,36 +291,47 @@ public class HangUpService extends AccessibilityService {
         return false;
     }
 
+    /**
+     * End WhatsApp call — tries multiple approaches
+     */
     private void endWhatsAppCall() {
+        Log.d(TAG, "=== ENDING WHATSAPP CALL ===");
+
         AccessibilityNodeInfo root = getRootInActiveWindow();
+        boolean clicked = false;
+
         if (root != null) {
-            // Try end call button by description
-            boolean clicked = clickNodeByDescriptions(root, new String[]{
+            // 1. Try end call button by description
+            clicked = clickNodeByDescriptions(root, new String[]{
                     "End call", "Hang up", "Decline",
                     "Raccrocher", "Terminer l'appel", "Refuser",
-                    "end", "fin"
+                    "Finalizar", "Colgar", "Recusar",
+                    "\u0625\u0646\u0647\u0627\u0621 \u0627\u0644\u0645\u0643\u0627\u0644\u0645\u0629"
             });
 
-            // Also try by text
+            // 2. Try by text
             if (!clicked) {
                 clicked = clickNodeByText(root, new String[]{
                         "Raccrocher", "End call", "Hang up",
-                        "Terminer", "Decline", "Refuser"
+                        "Terminer", "Decline", "Refuser",
+                        "Finalizar", "Colgar"
                 });
             }
 
             root.recycle();
-
-            if (!clicked) {
-                performGlobalAction(GLOBAL_ACTION_BACK);
-                handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 300);
-            }
-        } else {
-            performGlobalAction(GLOBAL_ACTION_BACK);
-            handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 300);
         }
 
-        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_HOME), 1000);
+        // 3. Fallback: BACK button multiple times (ends WhatsApp call reliably)
+        if (!clicked) {
+            Log.d(TAG, "Button not found — using BACK to end call");
+        }
+        // Always do BACK as extra safety, even if we clicked a button
+        performGlobalAction(GLOBAL_ACTION_BACK);
+        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 500);
+        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 1000);
+
+        // Return to home screen
+        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_HOME), 1500);
     }
 
     private void finishCall(boolean success) {
@@ -273,6 +339,7 @@ public class HangUpService extends AccessibilityService {
         state = CallState.ENDED;
         cancelTimeout(callButtonTimeoutRunnable);
         cancelTimeout(ringTimeoutRunnable);
+        Log.d(TAG, "Call finished (success=" + success + ")");
 
         if (callback != null) {
             CallDoneCallback cb = callback;
