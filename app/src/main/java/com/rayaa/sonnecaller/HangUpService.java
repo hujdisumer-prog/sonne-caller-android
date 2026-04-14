@@ -1,8 +1,11 @@
 package com.rayaa.sonnecaller;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.GestureDescription;
+import android.graphics.Path;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -32,7 +35,6 @@ public class HangUpService extends AccessibilityService {
     public static boolean isAvailable() { return instance != null; }
 
     public void prepareForCall(CallDoneCallback onDone) {
-        // Cancel any pending actions from previous call
         handler.removeCallbacksAndMessages(null);
         cancelTimeout(callButtonTimeoutRunnable);
         cancelTimeout(ringTimeoutRunnable);
@@ -119,8 +121,6 @@ public class HangUpService extends AccessibilityService {
         state = CallState.IN_CALL;
         cancelTimeout(callButtonTimeoutRunnable);
 
-        // Immediate hangup: end call right away (0 seconds after connection)
-        // The 10s timer is for when nobody answers (just let it ring)
         ringTimeoutRunnable = () -> {
             if (state == CallState.IN_CALL) {
                 Log.d(TAG, "Ring timeout (10s) — ending call");
@@ -133,8 +133,7 @@ public class HangUpService extends AccessibilityService {
     }
 
     private void handleInCall(AccessibilityNodeInfo root) {
-        // Only use timer text ("0:00", "0:01") to detect answered call
-        // Do NOT use mute/speaker buttons — they appear during ringing too
+        // Timer text like "0:00", "0:01", "00:00", "0.00"
         if (hasTimerText(root)) {
             Log.d(TAG, "Call answered (timer detected) — ending immediately!");
             endWhatsAppCall();
@@ -146,41 +145,21 @@ public class HangUpService extends AccessibilityService {
         if (node == null) return false;
 
         CharSequence text = node.getText();
-        if (text != null && text.toString().matches("\\d+:\\d{2}")) {
-            return true;
+        if (text != null) {
+            String t = text.toString().trim();
+            // Match various timer formats: "0:00", "0:01", "00:00", "0.00" etc.
+            if (t.matches("\\d{1,2}[:.:]\\d{2}")) {
+                // Exclude times like "14:30" (clock times) — call timers start at 0
+                if (t.startsWith("0") || t.equals("1:00") || t.equals("01:00")) {
+                    return true;
+                }
+            }
         }
 
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) {
                 boolean found = hasTimerText(child);
-                child.recycle();
-                if (found) return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Detect if the call screen is showing "Ringing" or "Calling" indicator
-     */
-    private boolean hasRingingIndicator(AccessibilityNodeInfo node) {
-        if (node == null) return false;
-
-        CharSequence text = node.getText();
-        if (text != null) {
-            String t = text.toString().toLowerCase();
-            if (t.contains("ringing") || t.contains("calling") ||
-                t.contains("sonne") || t.contains("appel en cours") ||
-                t.contains("\u00e7a sonne") || t.contains("sonnerie")) {
-                return true;
-            }
-        }
-
-        for (int i = 0; i < node.getChildCount(); i++) {
-            AccessibilityNodeInfo child = node.getChild(i);
-            if (child != null) {
-                boolean found = hasRingingIndicator(child);
                 child.recycle();
                 if (found) return true;
             }
@@ -257,7 +236,11 @@ public class HangUpService extends AccessibilityService {
     }
 
     /**
-     * End WhatsApp call — tries multiple approaches
+     * End WhatsApp call — tries multiple approaches:
+     * 1. Click end call button by description
+     * 2. Click end call button by text
+     * 3. Tap bottom-center of screen (where red button always is)
+     * 4. BACK button as last resort
      */
     private void endWhatsAppCall() {
         Log.d(TAG, "=== ENDING WHATSAPP CALL ===");
@@ -286,17 +269,72 @@ public class HangUpService extends AccessibilityService {
             root.recycle();
         }
 
-        // 3. Fallback: BACK button multiple times (ends WhatsApp call reliably)
         if (!clicked) {
-            Log.d(TAG, "Button not found — using BACK to end call");
+            Log.d(TAG, "End button not found — tapping bottom center of screen");
+            // 3. Tap the red end call button at bottom-center of screen
+            tapEndCallButton();
         }
-        // Always do BACK as extra safety, even if we clicked a button
-        performGlobalAction(GLOBAL_ACTION_BACK);
-        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 500);
-        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 1000);
+
+        // 4. BACK as extra safety after a delay
+        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 800);
+        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 1300);
 
         // Return to home screen
-        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_HOME), 1500);
+        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_HOME), 2000);
+    }
+
+    /**
+     * Tap the bottom-center of the screen where WhatsApp's red end call button is.
+     * This is the most reliable fallback when we can't find the button via accessibility.
+     */
+    private void tapEndCallButton() {
+        try {
+            DisplayMetrics metrics = getResources().getDisplayMetrics();
+            int screenWidth = metrics.widthPixels;
+            int screenHeight = metrics.heightPixels;
+
+            // WhatsApp end call button is at bottom-center, ~85% down the screen
+            float tapX = screenWidth / 2f;
+            float tapY = screenHeight * 0.85f;
+
+            Log.d(TAG, "Tapping at (" + tapX + ", " + tapY + ") to end call");
+
+            Path path = new Path();
+            path.moveTo(tapX, tapY);
+
+            GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, 100))
+                    .build();
+
+            dispatchGesture(gesture, new GestureResultCallback() {
+                @Override
+                public void onCompleted(GestureDescription gestureDescription) {
+                    Log.d(TAG, "Tap gesture completed");
+                }
+
+                @Override
+                public void onCancelled(GestureDescription gestureDescription) {
+                    Log.e(TAG, "Tap gesture cancelled");
+                }
+            }, null);
+
+            // Try a second tap slightly lower in case the button position varies
+            handler.postDelayed(() -> {
+                float tapY2 = screenHeight * 0.9f;
+                Path path2 = new Path();
+                path2.moveTo(tapX, tapY2);
+
+                GestureDescription gesture2 = new GestureDescription.Builder()
+                        .addStroke(new GestureDescription.StrokeDescription(path2, 0, 100))
+                        .build();
+
+                dispatchGesture(gesture2, null, null);
+                Log.d(TAG, "Second tap at (" + tapX + ", " + tapY2 + ")");
+            }, 400);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Tap gesture failed: " + e.getMessage());
+        }
     }
 
     private void finishCall(boolean success) {
