@@ -9,10 +9,8 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.telecom.TelecomManager;
 import android.util.Log;
 
-import java.io.IOException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -31,13 +29,15 @@ public class CallerService extends Service {
     private static final String CHANNEL_ID = "sonne_caller_channel";
     private static final int NOTIFICATION_ID = 1;
     private static final int POLL_INTERVAL_SECONDS = 5;
-    private static final int RING_DURATION_MS = 25000; // 25 seconds
+    private static final int SAFETY_TIMEOUT_MS = 20000; // 20s safety net
+    private static final String WA_PACKAGE = "com.whatsapp.w4b";
 
     public static boolean isRunning = false;
 
     private ScheduledExecutorService scheduler;
     private OkHttpClient httpClient;
     private Handler mainHandler;
+    private boolean callInProgress = false;
 
     @Override
     public void onCreate() {
@@ -59,7 +59,6 @@ public class CallerService extends Service {
         startForeground(NOTIFICATION_ID, notification);
         isRunning = true;
 
-        // Start polling for calls
         scheduler = Executors.newSingleThreadScheduledExecutor();
         scheduler.scheduleWithFixedDelay(this::pollForCalls, 0, POLL_INTERVAL_SECONDS, TimeUnit.SECONDS);
 
@@ -67,6 +66,8 @@ public class CallerService extends Service {
     }
 
     private void pollForCalls() {
+        if (callInProgress) return;
+
         try {
             Request request = new Request.Builder()
                     .url(BuildConfig.API_URL + "/api/next-call")
@@ -79,7 +80,7 @@ public class CallerService extends Service {
             JSONObject json = new JSONObject(body);
 
             if (json.isNull("call")) {
-                return; // No call in queue
+                return;
             }
 
             JSONObject call = json.getJSONObject("call");
@@ -87,41 +88,56 @@ public class CallerService extends Service {
             String requestId = call.getString("id");
 
             Log.d(TAG, "Got call request: " + phone + " (id: " + requestId + ")");
-            makeCall(phone, requestId);
+            makeWhatsAppCall(phone, requestId);
 
         } catch (Exception e) {
             Log.e(TAG, "Poll error: " + e.getMessage());
         }
     }
 
-    private void makeCall(String phone, String requestId) {
+    private void makeWhatsAppCall(String phone, String requestId) {
+        callInProgress = true;
+
         try {
-            // Launch the call
-            String callNumber = "#31#" + phone;
-            Intent callIntent = new Intent(Intent.ACTION_CALL);
-            callIntent.setData(android.net.Uri.parse("tel:" + android.net.Uri.encode(callNumber)));
-            callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            // Strip + and non-digit chars for wa.me URL
+            String waNumber = phone.replaceAll("[^0-9]", "");
+
+            // Set up HangUpService callback
+            if (HangUpService.isAvailable()) {
+                HangUpService.getInstance().prepareForCall(success -> {
+                    mainHandler.post(() -> {
+                        if (!callInProgress) return; // Already handled by safety timeout
+                        Log.d(TAG, "Call completed via HangUpService (success=" + success + ")");
+                        completeCall(requestId, success);
+                    });
+                });
+            }
+
+            // Open WhatsApp chat
+            Intent waIntent = new Intent(Intent.ACTION_VIEW);
+            waIntent.setData(Uri.parse("https://wa.me/" + waNumber));
+            waIntent.setPackage(WA_PACKAGE);
+            waIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
             // Check if screen is on or off
             android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
             boolean screenOn = pm.isInteractive();
 
             if (!screenOn) {
-                // Screen OFF — use CallActivity with fullscreen intent to wake screen
-                Intent callActivityIntent = new Intent(this, CallActivity.class);
-                callActivityIntent.putExtra("phone", phone);
-                callActivityIntent.putExtra("requestId", requestId);
-                callActivityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                // Screen OFF — use CallActivity to wake screen then open WhatsApp
+                Intent wakeIntent = new Intent(this, CallActivity.class);
+                wakeIntent.putExtra("waNumber", waNumber);
+                wakeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
                 Notification callNotif = new Notification.Builder(this, "sonne_call_channel")
                         .setContentTitle("Sonne Caller")
-                        .setContentText("Appel en cours: " + phone)
+                        .setContentText("Appel WhatsApp: " + phone)
                         .setSmallIcon(android.R.drawable.ic_menu_call)
                         .setFullScreenIntent(
-                            android.app.PendingIntent.getActivity(
-                                this, 0, callActivityIntent,
-                                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
-                            ), true)
+                                android.app.PendingIntent.getActivity(
+                                        this, 0, wakeIntent,
+                                        android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+                                ), true)
                         .setCategory(Notification.CATEGORY_CALL)
                         .setPriority(Notification.PRIORITY_MAX)
                         .setOngoing(true)
@@ -130,39 +146,45 @@ public class CallerService extends Service {
                 NotificationManager nm = getSystemService(NotificationManager.class);
                 nm.notify(2, callNotif);
 
-                try { startActivity(callActivityIntent); } catch (Exception e) {}
+                try { startActivity(wakeIntent); } catch (Exception e) {
+                    Log.e(TAG, "Could not start CallActivity: " + e.getMessage());
+                }
             } else {
-                // Screen ON — call directly
-                startActivity(callIntent);
+                // Screen ON — open WhatsApp directly
+                startActivity(waIntent);
             }
 
-            Log.d(TAG, "Call started to " + phone + " (screen=" + (screenOn ? "ON" : "OFF") + ")");
-            updateNotification("Appel en cours: " + phone);
+            Log.d(TAG, "WhatsApp chat opened for " + waNumber + " (screen=" + (screenOn ? "ON" : "OFF") + ")");
+            updateNotification("Appel WhatsApp: " + phone);
 
-            // *** HANG UP AFTER 25 SECONDS VIA AIRPLANE MODE ***
-            // This runs in CallerService which NEVER gets killed
+            // SAFETY TIMEOUT: force end after 20s
             mainHandler.postDelayed(() -> {
-                Log.d(TAG, "25 sec timer fired — hanging up via airplane mode");
+                if (!callInProgress) return;
+                Log.d(TAG, "Safety timeout (20s) — forcing end");
 
                 if (HangUpService.isAvailable()) {
-                    HangUpService.getInstance().endCall();
-                } else {
-                    Log.e(TAG, "HangUpService not available!");
+                    HangUpService.getInstance().forceEndCall();
                 }
 
-                // Report done after a delay to let airplane mode toggle
                 mainHandler.postDelayed(() -> {
-                    reportCallDone(requestId, true);
-                    updateNotification("En attente d'appels...");
-                    NotificationManager nm2 = getSystemService(NotificationManager.class);
-                    nm2.cancel(2);
-                }, 5000);
+                    if (!callInProgress) return;
+                    completeCall(requestId, true);
+                }, 3000);
 
-            }, RING_DURATION_MS);
+            }, SAFETY_TIMEOUT_MS);
 
         } catch (Exception e) {
-            Log.e(TAG, "makeCall error: " + e.getMessage());
+            Log.e(TAG, "makeWhatsAppCall error: " + e.getMessage());
+            completeCall(requestId, false);
         }
+    }
+
+    private void completeCall(String requestId, boolean success) {
+        callInProgress = false;
+        reportCallDone(requestId, success);
+        updateNotification("En attente d'appels...");
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        nm.cancel(2);
     }
 
     private void reportCallDone(String requestId, boolean success) {
@@ -171,7 +193,7 @@ public class CallerService extends Service {
                 org.json.JSONObject json = new org.json.JSONObject();
                 json.put("id", requestId);
                 json.put("success", success);
-                if (!success) json.put("message", "L'appel n'a pas pu aboutir");
+                if (!success) json.put("message", "L'appel WhatsApp n'a pas pu aboutir");
 
                 okhttp3.Request request = new okhttp3.Request.Builder()
                         .url(BuildConfig.API_URL + "/api/call-done")
@@ -180,7 +202,7 @@ public class CallerService extends Service {
                         .build();
 
                 httpClient.newCall(request).execute();
-                Log.d(TAG, "Reported call done: " + requestId);
+                Log.d(TAG, "Reported call done: " + requestId + " (success=" + success + ")");
             } catch (Exception e) {
                 Log.e(TAG, "Report error: " + e.getMessage());
             }
@@ -200,7 +222,6 @@ public class CallerService extends Service {
     }
 
     private void createNotificationChannel() {
-        // Canal normal pour le service
         NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
                 "Sonne Caller Service",
@@ -208,7 +229,6 @@ public class CallerService extends Service {
         );
         channel.setDescription("Service d'appel automatique");
 
-        // Canal haute priorité pour les appels (perce le mode arrière-plan Samsung)
         NotificationChannel callChannel = new NotificationChannel(
                 "sonne_call_channel",
                 "Appels Sonne Caller",

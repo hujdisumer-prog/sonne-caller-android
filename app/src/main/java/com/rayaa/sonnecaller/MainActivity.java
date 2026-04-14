@@ -1,9 +1,7 @@
 package com.rayaa.sonnecaller;
 
-import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.TextView;
@@ -11,7 +9,6 @@ import android.widget.Toast;
 
 public class MainActivity extends Activity {
 
-    private static final int PERMISSION_REQUEST = 1;
     private TextView statusText;
     private Button startButton;
     private Button stopButton;
@@ -25,15 +22,6 @@ public class MainActivity extends Activity {
         startButton = findViewById(R.id.startButton);
         stopButton = findViewById(R.id.stopButton);
 
-        // Request permissions
-        if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED
-            || checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{
-                Manifest.permission.CALL_PHONE,
-                Manifest.permission.READ_PHONE_STATE
-            }, PERMISSION_REQUEST);
-        }
-
         startButton.setOnClickListener(v -> startService());
         stopButton.setOnClickListener(v -> stopService());
 
@@ -41,15 +29,16 @@ public class MainActivity extends Activity {
     }
 
     private void startService() {
-        if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(this, "Permission d'appel requise", Toast.LENGTH_SHORT).show();
-            requestPermissions(new String[]{Manifest.permission.CALL_PHONE}, PERMISSION_REQUEST);
+        if (!HangUpService.isAvailable()) {
+            Toast.makeText(this,
+                "Activez le service d'accessibilit\u00e9 'Sonne Caller' dans les param\u00e8tres",
+                Toast.LENGTH_LONG).show();
             return;
         }
 
         Intent intent = new Intent(this, CallerService.class);
         startForegroundService(intent);
-        statusText.setText("Service actif — En attente d'appels...");
+        statusText.setText("Service actif \u2014 En attente d'appels WhatsApp...");
         startButton.setEnabled(false);
         stopButton.setEnabled(true);
     }
@@ -57,31 +46,20 @@ public class MainActivity extends Activity {
     private void stopService() {
         Intent intent = new Intent(this, CallerService.class);
         stopService(intent);
-        statusText.setText("Service arrêté");
+        statusText.setText("Service arr\u00eat\u00e9");
         startButton.setEnabled(true);
         stopButton.setEnabled(false);
     }
 
     private void updateStatus() {
         if (CallerService.isRunning) {
-            statusText.setText("Service actif — En attente d'appels...");
+            statusText.setText("Service actif \u2014 En attente d'appels WhatsApp...");
             startButton.setEnabled(false);
             stopButton.setEnabled(true);
         } else {
-            statusText.setText("Service arrêté");
+            statusText.setText("Service arr\u00eat\u00e9");
             startButton.setEnabled(true);
             stopButton.setEnabled(false);
-        }
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        if (requestCode == PERMISSION_REQUEST) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Permission accordée", Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(this, "Permission refusée — l'app ne peut pas fonctionner", Toast.LENGTH_LONG).show();
-            }
         }
     }
 }

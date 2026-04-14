@@ -1,23 +1,18 @@
 package com.rayaa.sonnecaller;
 
-import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Handler;
 import android.os.PowerManager;
-import android.telecom.TelecomManager;
 import android.util.Log;
 import android.view.WindowManager;
 
 public class CallActivity extends Activity {
 
     private static final String TAG = "SonneCaller";
-    private static final int RING_DURATION_MS = 25000;
+    private static final String WA_PACKAGE = "com.whatsapp.w4b";
     private PowerManager.WakeLock wakeLock;
-    private Handler handler = new Handler();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,26 +32,26 @@ public class CallActivity extends Activity {
         );
         wakeLock.acquire(30000);
 
-        String phone = getIntent().getStringExtra("phone");
-        if (phone != null) {
-            makeCall(phone);
+        String waNumber = getIntent().getStringExtra("waNumber");
+        if (waNumber != null) {
+            openWhatsAppChat(waNumber);
         } else {
             finish();
         }
     }
 
-    private void makeCall(String phone) {
-        if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
-            finish();
-            return;
+    private void openWhatsAppChat(String waNumber) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setData(Uri.parse("https://wa.me/" + waNumber));
+            intent.setPackage(WA_PACKAGE);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+            Log.d(TAG, "CallActivity: WhatsApp chat opened for " + waNumber);
+        } catch (Exception e) {
+            Log.e(TAG, "CallActivity: failed to open WhatsApp: " + e.getMessage());
         }
-
-        String callNumber = "#31#" + phone;
-        Intent callIntent = new Intent(Intent.ACTION_CALL);
-        callIntent.setData(Uri.parse("tel:" + Uri.encode(callNumber)));
-        startActivity(callIntent);
-        Log.d(TAG, "CallActivity: call started to " + phone);
-        finish(); // Close immediately, CallerService handles the hangup timer
+        finish();
     }
 
     @Override
