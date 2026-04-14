@@ -90,9 +90,9 @@ public class HangUpService extends AccessibilityService {
         if (clickNodeByText(root, new String[]{
                 "Appeler", "APPELER",
                 "Call", "CALL",
-                "D\u00e9marrer", "DEMARRER",
-                "Start", "START",
-                "OK", "Ok",
+                "D\u00e9marrer un appel vocal",
+                "Start voice call",
+                "OK",
                 "Llamar", "LLAMAR",
                 "\u0627\u062a\u0635\u0644",
                 "\u62e8\u6253",
@@ -106,11 +106,6 @@ public class HangUpService extends AccessibilityService {
                 "D\u00e9marrer un appel vocal"
         })) {
             Log.d(TAG, "Confirm button clicked (via description) — call starting!");
-            startInCallState();
-        }
-        // If we detect ringing text or timer, the call started without confirm popup
-        else if (hasRingingIndicator(root)) {
-            Log.d(TAG, "Call started without confirm — already ringing");
             startInCallState();
         }
     }
@@ -263,9 +258,9 @@ public class HangUpService extends AccessibilityService {
 
         CharSequence nodeText = node.getText();
         if (nodeText != null) {
-            String textLower = nodeText.toString().trim().toLowerCase();
+            String textStr = nodeText.toString().trim();
             for (String target : texts) {
-                if (textLower.contains(target.toLowerCase())) {
+                if (textStr.equalsIgnoreCase(target)) {
                     if (node.isClickable()) {
                         node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                         return true;
