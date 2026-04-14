@@ -13,10 +13,10 @@ public class HangUpService extends AccessibilityService {
     private static HangUpService instance = null;
 
     private static final String WA_PACKAGE = "com.whatsapp.w4b";
-    private static final int CALL_BUTTON_TIMEOUT_MS = 5000;
+    private static final int CALL_BUTTON_TIMEOUT_MS = 8000;
     private static final int RING_DURATION_MS = 10000;
 
-    private enum CallState { IDLE, WAITING_CALL_BUTTON, IN_CALL, ENDED }
+    private enum CallState { IDLE, WAITING_CALL_BUTTON, WAITING_CONFIRM, IN_CALL, ENDED }
 
     private CallState state = CallState.IDLE;
     private CallDoneCallback callback;
@@ -31,17 +31,13 @@ public class HangUpService extends AccessibilityService {
     public static HangUpService getInstance() { return instance; }
     public static boolean isAvailable() { return instance != null; }
 
-    /**
-     * Called by CallerService before opening WhatsApp chat.
-     * Sets up accessibility to click the call button, monitor call, and end it.
-     */
     public void prepareForCall(CallDoneCallback onDone) {
         this.callback = onDone;
         this.state = CallState.WAITING_CALL_BUTTON;
 
         callButtonTimeoutRunnable = () -> {
-            if (state == CallState.WAITING_CALL_BUTTON) {
-                Log.e(TAG, "Could not find call button — giving up");
+            if (state == CallState.WAITING_CALL_BUTTON || state == CallState.WAITING_CONFIRM) {
+                Log.e(TAG, "Timeout — could not complete call setup");
                 finishCall(false);
             }
         };
@@ -50,9 +46,6 @@ public class HangUpService extends AccessibilityService {
         Log.d(TAG, "Prepared for WhatsApp call — waiting for chat screen");
     }
 
-    /**
-     * Force end the call (safety timeout from CallerService)
-     */
     public void forceEndCall() {
         if (state == CallState.ENDED) return;
         Log.d(TAG, "Force ending call");
@@ -74,6 +67,8 @@ public class HangUpService extends AccessibilityService {
         try {
             if (state == CallState.WAITING_CALL_BUTTON) {
                 handleWaitingCallButton(root);
+            } else if (state == CallState.WAITING_CONFIRM) {
+                handleWaitingConfirm(root);
             } else if (state == CallState.IN_CALL) {
                 handleInCall(root);
             }
@@ -83,15 +78,51 @@ public class HangUpService extends AccessibilityService {
     }
 
     private void handleWaitingCallButton(AccessibilityNodeInfo root) {
-        // Try to click the voice call button in the chat toolbar
         if (clickNodeByDescriptions(root, new String[]{
                 "Voice call", "Audio call", "Appel vocal", "Appel audio"
         })) {
-            Log.d(TAG, "Voice call button clicked!");
+            Log.d(TAG, "Voice call button clicked — waiting for confirm popup");
+            state = CallState.WAITING_CONFIRM;
+        }
+    }
+
+    private void handleWaitingConfirm(AccessibilityNodeInfo root) {
+        // Try clicking the confirm button in the popup
+        // WhatsApp shows "Appeler" / "Call" / "Start voice call" etc.
+        if (clickNodeByText(root, new String[]{
+                "Appeler", "APPELER",
+                "Call", "CALL",
+                "D\u00e9marrer", "DEMARRER",
+                "Start", "START",
+                "OK", "Ok",
+                "Llamar", "LLAMAR",
+                "\u0627\u062a\u0635\u0644",
+                "\u62e8\u6253",
+                "Ligar", "LIGAR",
+                "\u041f\u043e\u0437\u0432\u043e\u043d\u0438\u0442\u044c"
+        })) {
+            Log.d(TAG, "Confirm button clicked — call starting!");
             state = CallState.IN_CALL;
             cancelTimeout(callButtonTimeoutRunnable);
 
-            // Start 10s ring timeout
+            ringTimeoutRunnable = () -> {
+                if (state == CallState.IN_CALL) {
+                    Log.d(TAG, "Ring timeout (10s) — ending call");
+                    endWhatsAppCall();
+                    finishCall(true);
+                }
+            };
+            handler.postDelayed(ringTimeoutRunnable, RING_DURATION_MS);
+        }
+        // Also try by content description in case it's not text-based
+        else if (clickNodeByDescriptions(root, new String[]{
+                "Call", "Appeler", "Start voice call",
+                "D\u00e9marrer un appel vocal"
+        })) {
+            Log.d(TAG, "Confirm button clicked (via description) — call starting!");
+            state = CallState.IN_CALL;
+            cancelTimeout(callButtonTimeoutRunnable);
+
             ringTimeoutRunnable = () -> {
                 if (state == CallState.IN_CALL) {
                     Log.d(TAG, "Ring timeout (10s) — ending call");
@@ -104,7 +135,6 @@ public class HangUpService extends AccessibilityService {
     }
 
     private void handleInCall(AccessibilityNodeInfo root) {
-        // If call was answered, WhatsApp shows a timer like "0:00", "0:01"
         if (hasTimerText(root)) {
             Log.d(TAG, "Call answered — ending immediately");
             endWhatsAppCall();
@@ -112,9 +142,6 @@ public class HangUpService extends AccessibilityService {
         }
     }
 
-    /**
-     * Look for timer text (e.g. "0:01") indicating call was answered
-     */
     private boolean hasTimerText(AccessibilityNodeInfo node) {
         if (node == null) return false;
 
@@ -135,7 +162,7 @@ public class HangUpService extends AccessibilityService {
     }
 
     /**
-     * Find and click a node matching one of the given content descriptions.
+     * Find and click a node by content description.
      * Skips video call buttons.
      */
     private boolean clickNodeByDescriptions(AccessibilityNodeInfo node, String[] descriptions) {
@@ -146,14 +173,12 @@ public class HangUpService extends AccessibilityService {
             String descLower = desc.toString().toLowerCase();
             for (String target : descriptions) {
                 if (descLower.contains(target.toLowerCase())) {
-                    // Skip video call buttons
                     if (descLower.contains("video") || descLower.contains("vid\u00e9o")) continue;
 
                     if (node.isClickable()) {
                         node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                         return true;
                     }
-                    // Try parent
                     AccessibilityNodeInfo parent = node.getParent();
                     if (parent != null && parent.isClickable()) {
                         parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
@@ -176,16 +201,59 @@ public class HangUpService extends AccessibilityService {
     }
 
     /**
-     * End the WhatsApp call by clicking the end call button or pressing back
+     * Find and click a node by its text content (for popup buttons).
      */
+    private boolean clickNodeByText(AccessibilityNodeInfo node, String[] texts) {
+        if (node == null) return false;
+
+        CharSequence nodeText = node.getText();
+        if (nodeText != null) {
+            String textStr = nodeText.toString().trim();
+            for (String target : texts) {
+                if (textStr.equalsIgnoreCase(target)) {
+                    if (node.isClickable()) {
+                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        return true;
+                    }
+                    AccessibilityNodeInfo parent = node.getParent();
+                    if (parent != null && parent.isClickable()) {
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        parent.recycle();
+                        return true;
+                    }
+                }
+            }
+        }
+
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                boolean found = clickNodeByText(child, texts);
+                child.recycle();
+                if (found) return true;
+            }
+        }
+        return false;
+    }
+
     private void endWhatsAppCall() {
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root != null) {
+            // Try end call button by description
             boolean clicked = clickNodeByDescriptions(root, new String[]{
                     "End call", "Hang up", "Decline",
                     "Raccrocher", "Terminer l'appel", "Refuser",
                     "end", "fin"
             });
+
+            // Also try by text
+            if (!clicked) {
+                clicked = clickNodeByText(root, new String[]{
+                        "Raccrocher", "End call", "Hang up",
+                        "Terminer", "Decline", "Refuser"
+                });
+            }
+
             root.recycle();
 
             if (!clicked) {
@@ -197,7 +265,6 @@ public class HangUpService extends AccessibilityService {
             handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 300);
         }
 
-        // Return to home screen
         handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_HOME), 1000);
     }
 
@@ -218,7 +285,6 @@ public class HangUpService extends AccessibilityService {
         if (runnable != null) handler.removeCallbacks(runnable);
     }
 
-    // Legacy method kept for compatibility
     public void endCall() {
         forceEndCall();
     }
