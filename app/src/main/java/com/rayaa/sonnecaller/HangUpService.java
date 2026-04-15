@@ -26,6 +26,7 @@ public class HangUpService extends AccessibilityService {
     private Handler handler = new Handler(Looper.getMainLooper());
     private Runnable callButtonTimeoutRunnable;
     private Runnable ringTimeoutRunnable;
+    private Runnable answerCheckRunnable;
 
     public interface CallDoneCallback {
         void onCallDone(boolean success);
@@ -38,6 +39,7 @@ public class HangUpService extends AccessibilityService {
         handler.removeCallbacksAndMessages(null);
         cancelTimeout(callButtonTimeoutRunnable);
         cancelTimeout(ringTimeoutRunnable);
+        stopAnswerCheck();
 
         this.callback = onDone;
         this.state = CallState.WAITING_CALL_BUTTON;
@@ -123,13 +125,50 @@ public class HangUpService extends AccessibilityService {
 
         ringTimeoutRunnable = () -> {
             if (state == CallState.IN_CALL) {
-                Log.d(TAG, "Ring timeout (10s) — ending call");
+                Log.d(TAG, "Ring timeout — ending call");
+                stopAnswerCheck();
                 endWhatsAppCall();
                 finishCall(true);
             }
         };
         handler.postDelayed(ringTimeoutRunnable, RING_DURATION_MS);
-        Log.d(TAG, "IN_CALL state — 10s ring timeout started");
+
+        // Poll every second to detect if call was answered
+        startAnswerCheck();
+
+        Log.d(TAG, "IN_CALL state — ring timeout + answer polling started");
+    }
+
+    private void startAnswerCheck() {
+        answerCheckRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (state != CallState.IN_CALL) return;
+
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                if (root != null) {
+                    if (hasTimerText(root)) {
+                        Log.d(TAG, "Answer detected by polling — ending immediately!");
+                        root.recycle();
+                        stopAnswerCheck();
+                        endWhatsAppCall();
+                        finishCall(true);
+                        return;
+                    }
+                    root.recycle();
+                }
+
+                // Check again in 1 second
+                handler.postDelayed(this, 1000);
+            }
+        };
+        handler.postDelayed(answerCheckRunnable, 1000);
+    }
+
+    private void stopAnswerCheck() {
+        if (answerCheckRunnable != null) {
+            handler.removeCallbacks(answerCheckRunnable);
+        }
     }
 
     private void handleInCall(AccessibilityNodeInfo root) {
@@ -343,6 +382,7 @@ public class HangUpService extends AccessibilityService {
         state = CallState.ENDED;
         cancelTimeout(callButtonTimeoutRunnable);
         cancelTimeout(ringTimeoutRunnable);
+        stopAnswerCheck();
         Log.d(TAG, "Call finished (success=" + success + ")");
 
         if (callback != null) {
