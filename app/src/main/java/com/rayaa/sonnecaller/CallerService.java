@@ -30,7 +30,7 @@ public class CallerService extends Service {
     private static final int NOTIFICATION_ID = 1;
     private static final int POLL_INTERVAL_SECONDS = 5;
     private static final int SAFETY_TIMEOUT_MS = 20000; // 20s safety net
-    private static final String WA_PACKAGE = "com.whatsapp.w4b";
+    private static final String WA_PACKAGE = "com.whatsapp";
 
     public static boolean isRunning = false;
 

@@ -11,7 +11,7 @@ import android.view.WindowManager;
 public class CallActivity extends Activity {
 
     private static final String TAG = "SonneCaller";
-    private static final String WA_PACKAGE = "com.whatsapp.w4b";
+    private static final String WA_PACKAGE = "com.whatsapp";
     private PowerManager.WakeLock wakeLock;
 
     @Override
