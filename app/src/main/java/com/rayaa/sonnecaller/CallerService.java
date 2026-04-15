@@ -29,7 +29,7 @@ public class CallerService extends Service {
     private static final String CHANNEL_ID = "sonne_caller_channel";
     private static final int NOTIFICATION_ID = 1;
     private static final int POLL_INTERVAL_SECONDS = 5;
-    private static final int SAFETY_TIMEOUT_MS = 20000; // 20s safety net
+    private static final int SAFETY_TIMEOUT_MS = 35000; // 35s safety net (must be > ring timeout)
     private static final String WA_PACKAGE = "com.whatsapp";
 
     public static boolean isRunning = false;
