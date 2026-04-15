@@ -133,10 +133,14 @@ public class HangUpService extends AccessibilityService {
         };
         handler.postDelayed(ringTimeoutRunnable, RING_DURATION_MS);
 
-        // Poll every second to detect if call was answered
-        startAnswerCheck();
+        // Start answer polling after 5s delay (let ringing begin first)
+        handler.postDelayed(() -> {
+            if (state == CallState.IN_CALL) {
+                startAnswerCheck();
+            }
+        }, 5000);
 
-        Log.d(TAG, "IN_CALL state — ring timeout + answer polling started");
+        Log.d(TAG, "IN_CALL state — ring timeout started, answer check in 5s");
     }
 
     private void startAnswerCheck() {
@@ -186,12 +190,10 @@ public class HangUpService extends AccessibilityService {
         CharSequence text = node.getText();
         if (text != null) {
             String t = text.toString().trim();
-            // Match various timer formats: "0:00", "0:01", "00:00", "0.00" etc.
-            if (t.matches("\\d{1,2}[:.:]\\d{2}")) {
-                // Exclude times like "14:30" (clock times) — call timers start at 0
-                if (t.startsWith("0") || t.equals("1:00") || t.equals("01:00")) {
-                    return true;
-                }
+            // Only match call timer that starts at 0 — "0:00", "0:01", ..., "0:59"
+            // This avoids matching clock times, durations, or other numbers
+            if (t.matches("0:\\d{2}")) {
+                return true;
             }
         }
 
