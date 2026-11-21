@@ -33,11 +33,27 @@ public class CallActivity extends Activity {
         wakeLock.acquire(30000);
 
         String waNumber = getIntent().getStringExtra("waNumber");
+        String phone = getIntent().getStringExtra("phone");
         if (waNumber != null) {
             openWhatsAppChat(waNumber);
+        } else if (phone != null) {
+            placeGsmCall(phone);
         } else {
             finish();
         }
+    }
+
+    private void placeGsmCall(String phone) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_CALL);
+            intent.setData(Uri.parse("tel:" + Uri.encode("#31#" + phone)));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+            Log.d(TAG, "CallActivity: appel GSM lancé vers " + phone);
+        } catch (Exception e) {
+            Log.e(TAG, "CallActivity: échec de l'appel GSM : " + e.getMessage());
+        }
+        finish();
     }
 
     private void openWhatsAppChat(String waNumber) {

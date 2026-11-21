@@ -32,6 +32,11 @@ public class CallerService extends Service {
     private static final int SAFETY_TIMEOUT_MS = 35000; // 35s safety net (must be > ring timeout)
     private static final String WA_PACKAGE = "com.whatsapp";
 
+    // false = appels téléphoniques classiques (SIM) ; true = ancien mode WhatsApp
+    public static final boolean USE_WHATSAPP = false;
+    // Durée de sonnerie avant raccrochage. À réduire si la messagerie vocale décroche avant.
+    private static final int RING_DURATION_MS = 25000;
+
     public static boolean isRunning = false;
 
     private ScheduledExecutorService scheduler;
@@ -88,10 +93,75 @@ public class CallerService extends Service {
             String requestId = call.getString("id");
 
             Log.d(TAG, "Got call request: " + phone + " (id: " + requestId + ")");
-            makeWhatsAppCall(phone, requestId);
+            if (USE_WHATSAPP) {
+                makeWhatsAppCall(phone, requestId);
+            } else {
+                mainHandler.post(() -> makeGsmCall(phone, requestId));
+            }
 
         } catch (Exception e) {
             Log.e(TAG, "Poll error: " + e.getMessage());
+        }
+    }
+
+    private void makeGsmCall(String phone, String requestId) {
+        callInProgress = true;
+
+        try {
+            // #31# = numéro masqué
+            Intent callIntent = new Intent(Intent.ACTION_CALL);
+            callIntent.setData(Uri.parse("tel:" + Uri.encode("#31#" + phone)));
+            callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            boolean screenOn = pm.isInteractive();
+
+            if (!screenOn) {
+                // Écran éteint : CallActivity rallume l'écran puis lance l'appel
+                Intent wakeIntent = new Intent(this, CallActivity.class);
+                wakeIntent.putExtra("phone", phone);
+                wakeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+                Notification callNotif = new Notification.Builder(this, "sonne_call_channel")
+                        .setContentTitle("Sonne Caller")
+                        .setContentText("Appel : " + phone)
+                        .setSmallIcon(android.R.drawable.ic_menu_call)
+                        .setFullScreenIntent(
+                                android.app.PendingIntent.getActivity(
+                                        this, 0, wakeIntent,
+                                        android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+                                ), true)
+                        .setCategory(Notification.CATEGORY_CALL)
+                        .setPriority(Notification.PRIORITY_MAX)
+                        .setOngoing(true)
+                        .build();
+
+                NotificationManager nm = getSystemService(NotificationManager.class);
+                nm.notify(2, callNotif);
+
+                try { startActivity(wakeIntent); } catch (Exception e) {
+                    Log.e(TAG, "Could not start CallActivity: " + e.getMessage());
+                }
+            } else {
+                startActivity(callIntent);
+            }
+
+            Log.d(TAG, "Appel GSM lancé vers " + phone + " (screen=" + (screenOn ? "ON" : "OFF") + ")");
+            updateNotification("Appel : " + phone);
+
+            // Raccrochage après la durée de sonnerie
+            mainHandler.postDelayed(() -> {
+                if (!callInProgress) return;
+                boolean hungUp = CallHangUp.endCall(this);
+                mainHandler.postDelayed(() -> {
+                    if (!callInProgress) return;
+                    completeCall(requestId, hungUp);
+                }, 3000);
+            }, RING_DURATION_MS);
+
+        } catch (Exception e) {
+            Log.e(TAG, "makeGsmCall error: " + e.getMessage());
+            completeCall(requestId, false);
         }
     }
 
@@ -193,7 +263,9 @@ public class CallerService extends Service {
                 org.json.JSONObject json = new org.json.JSONObject();
                 json.put("id", requestId);
                 json.put("success", success);
-                if (!success) json.put("message", "L'appel WhatsApp n'a pas pu aboutir");
+                if (!success) json.put("message", USE_WHATSAPP
+                        ? "L'appel WhatsApp n'a pas pu aboutir"
+                        : "L'appel n'a pas pu aboutir");
 
                 okhttp3.Request request = new okhttp3.Request.Builder()
                         .url(BuildConfig.API_URL + "/api/call-done")
