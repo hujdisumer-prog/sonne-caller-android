@@ -152,10 +152,12 @@ public class CallerService extends Service {
             // Raccrochage après la durée de sonnerie
             mainHandler.postDelayed(() -> {
                 if (!callInProgress) return;
-                boolean hungUp = CallHangUp.endCall(this);
+                // Le résultat du raccrochage ne change rien pour le visiteur : son téléphone a sonné.
+                // (Si l'app ne peut pas raccrocher, raccrocheur_pc.py le fait par adb.)
+                CallHangUp.endCall(this);
                 mainHandler.postDelayed(() -> {
                     if (!callInProgress) return;
-                    completeCall(requestId, hungUp);
+                    completeCall(requestId, true);
                 }, 3000);
             }, RING_DURATION_MS);
 
