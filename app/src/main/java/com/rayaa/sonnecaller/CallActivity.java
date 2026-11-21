@@ -14,6 +14,10 @@ public class CallActivity extends Activity {
     private static final String WA_PACKAGE = "com.whatsapp";
     private PowerManager.WakeLock wakeLock;
 
+    // Évite le double appel : la notification plein écran ET startActivity peuvent ouvrir cette activité
+    private static String lastPhone = null;
+    private static long lastCallAt = 0;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -44,6 +48,14 @@ public class CallActivity extends Activity {
     }
 
     private void placeGsmCall(String phone) {
+        long now = System.currentTimeMillis();
+        if (phone.equals(lastPhone) && now - lastCallAt < 10000) {
+            Log.d(TAG, "CallActivity: appel déjà lancé, doublon ignoré");
+            finish();
+            return;
+        }
+        lastPhone = phone;
+        lastCallAt = now;
         try {
             Intent intent = new Intent(Intent.ACTION_CALL);
             intent.setData(Uri.parse("tel:" + Uri.encode("#31#" + phone)));
