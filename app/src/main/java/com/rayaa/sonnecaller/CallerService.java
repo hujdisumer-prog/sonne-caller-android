@@ -63,6 +63,7 @@ public class CallerService extends Service {
 
         startForeground(NOTIFICATION_ID, notification);
         isRunning = true;
+        setMicMuted(false); // sécurité : jamais de micro coupé hors appel de l'app
 
         scheduler = Executors.newSingleThreadScheduledExecutor();
         scheduler.scheduleWithFixedDelay(this::pollForCalls, 0, POLL_INTERVAL_SECONDS, TimeUnit.SECONDS);
@@ -148,6 +149,12 @@ public class CallerService extends Service {
 
             Log.d(TAG, "Appel GSM lancé vers " + phone + " (screen=" + (screenOn ? "ON" : "OFF") + ")");
             updateNotification("Appel : " + phone);
+
+            // Micro coupé pendant l'appel (re-coupé ensuite au cas où le téléphone le réactive)
+            setMicMuted(true);
+            for (int delay : new int[]{1000, 3000, 6000}) {
+                mainHandler.postDelayed(() -> { if (callInProgress) setMicMuted(true); }, delay);
+            }
 
             // Raccrochage après la durée de sonnerie
             mainHandler.postDelayed(() -> {
@@ -251,8 +258,21 @@ public class CallerService extends Service {
         }
     }
 
+    private void setMicMuted(boolean muted) {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+            am.setMicrophoneMute(muted);
+            Log.d(TAG, "Micro " + (muted ? "coupé" : "rétabli") + " (état=" + am.isMicrophoneMute() + ")");
+        } catch (Exception e) {
+            Log.e(TAG, "setMicMuted error: " + e.getMessage());
+        }
+    }
+
     private void completeCall(String requestId, boolean success) {
         callInProgress = false;
+        setMicMuted(false);
+        // Re-rétabli un peu plus tard, une fois l'appel bien terminé
+        mainHandler.postDelayed(() -> { if (!callInProgress) setMicMuted(false); }, 2000);
         reportCallDone(requestId, success);
         updateNotification("En attente d'appels...");
         NotificationManager nm = getSystemService(NotificationManager.class);
@@ -319,6 +339,7 @@ public class CallerService extends Service {
     @Override
     public void onDestroy() {
         isRunning = false;
+        setMicMuted(false);
         if (scheduler != null) scheduler.shutdown();
         super.onDestroy();
     }
